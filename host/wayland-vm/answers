@@ -1,0 +1,16 @@
+KEYMAPOPTS=none
+HOSTNAMEOPTS=waylandvm
+DEVDOPTS=mdev
+INTERFACESOPTS="auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet dhcp
+"
+TIMEZONEOPTS="UTC"
+PROXYOPTS=none
+USEROPTS="-a -f josh josh"
+SSHDOPTS=openssh
+NTPOPTS=none
+LBUOPTS=none
+APKCACHEOPTS=none
