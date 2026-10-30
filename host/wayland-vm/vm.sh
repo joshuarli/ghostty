@@ -202,8 +202,8 @@ setup() {
 	say 'provisioning'
 	qemu=$(qemu_base)
 	boot; login; provision
-	qemu-img snapshot -c ready "$disk"
 	poweroff
+	qemu-img snapshot -c ready "$disk"
 	say 'saved snapshot "ready"'
 }
 start() {
