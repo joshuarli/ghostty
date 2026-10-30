@@ -3362,10 +3362,10 @@ keybind: Keybinds = .{},
 ///   * `off`
 @"keyboard-sound": KeyboardSound = .@"buckling-spring",
 
-/// Loudness of `keyboard-sound`, from 0.0 (silent) to 1.0 (full). The default
-/// is 1.0. Perceived loudness follows a squared gain curve. Values outside
-/// 0.0...1.0, and non-finite values, are rejected. This only has an effect
-/// on macOS.
+/// Loudness of `keyboard-sound`, from 0.0 (silent) to 1.0 (full volume),
+/// up to 2.0 (boosted). The default is 1.0. Perceived loudness follows
+/// a squared gain curve. Values outside 0.0...2.0, and non-finite values,
+/// are rejected. This only has an effect on macOS.
 @"keyboard-sound-volume": KeyboardSoundVolume = .{},
 
 /// Play a sample when a physical key is released. The default is true. This
@@ -10504,7 +10504,7 @@ pub const KeyboardSoundVolume = struct {
     pub fn parseCLI(input_: ?[]const u8) !KeyboardSoundVolume {
         const input = input_ orelse return error.ValueRequired;
         const value = std.fmt.parseFloat(f64, input) catch return error.InvalidValue;
-        if (!std.math.isFinite(value) or value < 0 or value > 1) return error.InvalidValue;
+        if (!std.math.isFinite(value) or value < 0 or value > 2) return error.InvalidValue;
         return .{ .value = value };
     }
 
@@ -10850,9 +10850,19 @@ test "keyboard-sound config" {
         try testing.expect(!cloned.@"keyboard-sound-release");
     }
 
+    {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        var it: TestIterator = .{ .data = &.{"--keyboard-sound-volume=1.5"} };
+        try cfg.loadIter(alloc, &it);
+        try cfg.finalize();
+        try testing.expect(cfg._diagnostics.empty());
+        try testing.expectEqual(@as(f64, 1.5), cfg.@"keyboard-sound-volume".value);
+    }
+
     const rejected = [_][]const u8{
         "--keyboard-sound=clicky",
-        "--keyboard-sound-volume=2",
+        "--keyboard-sound-volume=2.5",
         "--keyboard-sound-volume=nan",
         "--keyboard-sound-volume=inf",
         "--keyboard-sound-volume=-0.1",

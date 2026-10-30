@@ -243,7 +243,7 @@ pub const Shared = struct {
     }
 
     pub fn setVolume(self: *Shared, value: f32) void {
-        const clamped: f32 = if (!std.math.isFinite(value)) 0 else std.math.clamp(value, 0, 1);
+        const clamped: f32 = if (!std.math.isFinite(value)) 0 else std.math.clamp(value, 0, 2);
         self.volume_bits.store(@bitCast(clamped), .monotonic);
     }
 
