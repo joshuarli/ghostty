@@ -30,7 +30,7 @@ APP_NAME="$(basename "$APP_SRC")"
 /usr/bin/ditto "$APP_SRC" "$STAGE/$APP_NAME"
 ln -s /Applications "$STAGE/Applications"
 
-cat > "$STAGE/READ ME FIRST.txt" <<EOF
+cat > "$STAGE/readme.txt" <<EOF
 Ghostty Custom — first launch
 -----------------------------
 1. Drag "$APP_NAME" onto Applications.
