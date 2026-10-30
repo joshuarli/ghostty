@@ -3363,7 +3363,7 @@ keybind: Keybinds = .{},
 @"keyboard-sound": KeyboardSound = .@"buckling-spring",
 
 /// Loudness of `keyboard-sound`, from 0.0 (silent) to 1.0 (full). The default
-/// is 0.20. Perceived loudness follows a squared gain curve. Values outside
+/// is 1.0. Perceived loudness follows a squared gain curve. Values outside
 /// 0.0...1.0, and non-finite values, are rejected. This only has an effect
 /// on macOS.
 @"keyboard-sound-volume": KeyboardSoundVolume = .{},
@@ -10500,7 +10500,7 @@ pub const KeyboardSound = enum {
 };
 
 pub const KeyboardSoundVolume = struct {
-    value: f64 = 0.20,
+    value: f64 = 1.0,
 
     pub fn parseCLI(input_: ?[]const u8) !KeyboardSoundVolume {
         const input = input_ orelse return error.ValueRequired;
@@ -10771,7 +10771,7 @@ test "keyboard-sound config" {
         var cfg = try Config.default(alloc);
         defer cfg.deinit();
         try testing.expectEqual(KeyboardSound.@"buckling-spring", cfg.@"keyboard-sound");
-        try testing.expectEqual(@as(f64, 0.20), cfg.@"keyboard-sound-volume".value);
+        try testing.expectEqual(@as(f64, 1.0), cfg.@"keyboard-sound-volume".value);
         try testing.expect(cfg.@"keyboard-sound-release");
         try testing.expect(cfg.@"keyboard-sound-variation");
         try testing.expect(cfg.@"keyboard-sound-spatial");
@@ -10818,7 +10818,7 @@ test "keyboard-sound config" {
         try cfg.loadIter(alloc, &it);
         try cfg.finalize();
         try testing.expectEqual(KeyboardSound.@"buckling-spring", cfg.@"keyboard-sound");
-        try testing.expectEqual(@as(f64, 0.20), cfg.@"keyboard-sound-volume".value);
+        try testing.expectEqual(@as(f64, 1.0), cfg.@"keyboard-sound-volume".value);
         try testing.expectEqual(@as(usize, 1), cfg._diagnostics.items().len);
     }
 }
