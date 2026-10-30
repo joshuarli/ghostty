@@ -50,7 +50,7 @@ jobs:
           key: zig-${{ runner.os }}-${{ hashFiles('build.zig.zon') }}
 
       - name: Build GhosttyKit
-        run: zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos -Dxcframework-target=native -Demit-macos-app=false -Dsentry=false
+        run: zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos.27.0 -Dxcframework-target=native -Demit-macos-app=false -Dsentry=false
 
       - name: Build app
         working-directory: macos
