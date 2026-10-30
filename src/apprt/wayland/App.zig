@@ -148,7 +148,7 @@ pub fn performAction(
 ) !bool {
     _ = target;
     switch (action) {
-        .quit => {
+        .quit, .close_all_windows => {
             self.running = false;
             return true;
         },

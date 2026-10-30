@@ -3,9 +3,9 @@
 ## Status
 
 Goal: `src/apprt/wayland/` native Wayland runtime in this fork, musl, no GTK/X11/D-Bus, single window, GPU dmabuf + shm fallback, QEMU-proven.
-Base: `d1b1ba52c`, tree at W3. Accepted: L0, W1, W2, W3 (wl_seat keyboard/pointer via xkbcommon, in-memory text clipboard roundtrip, `smoke-input.sh` PASS). Red: none. Parked: none.
-Next: W4 config/single-window parity + no-desktop-baggage proof.
-Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `sh .work/smoke-input.sh`.
+Base: `d1b1ba52c`, tree at W4+M1. Accepted: L0-W4 (single-window allowlist quit/new/close; show-config ok; version=.wayland; no org.gtk.Actions; M1 test-lib-vt subset exit 0). Red: none. Parked: none.
+Next: W5 scaling+graphics+fallback (fractional, Kitty graphics, forced-shm).
+Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `sh .work/smoke-present.sh`.
 
 ## Charter
 
