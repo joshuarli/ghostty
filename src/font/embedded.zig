@@ -9,6 +9,9 @@
 pub const variable = @embedFile("jetbrains_mono_variable");
 pub const variable_italic = @embedFile("jetbrains_mono_variable_italic");
 
+/// Custom default: GlassTTY-Soft (single static weight, used as primary).
+pub const glasstty_soft = @embedFile("res/GlassTTY-Soft.ttf");
+
 /// Symbols-only nerd font.
 pub const symbols_nerd_font = @embedFile("nerd_fonts_symbols_only");
 

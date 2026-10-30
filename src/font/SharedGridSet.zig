@@ -257,7 +257,63 @@ fn collection(
     // the configured styles.
     try c.completeStyles(self.alloc, config.@"font-synthetic-style");
 
-    // Our built-in font will be used as a backup
+    // Custom primary fallback: GlassTTY-Soft. Single static weight,
+    // so the same face backs all styles. JetBrains below remains as a
+    // secondary fallback for glyphs GlassTTY doesn't cover.
+    _ = try c.add(
+        self.alloc,
+        try .init(
+            self.font_lib,
+            font.embedded.glasstty_soft,
+            load_options.faceOptions(),
+        ),
+        .{
+            .style = .regular,
+            .fallback = true,
+            .size_adjustment = font.default_fallback_adjustment,
+        },
+    );
+    _ = try c.add(
+        self.alloc,
+        try .init(
+            self.font_lib,
+            font.embedded.glasstty_soft,
+            load_options.faceOptions(),
+        ),
+        .{
+            .style = .bold,
+            .fallback = true,
+            .size_adjustment = font.default_fallback_adjustment,
+        },
+    );
+    _ = try c.add(
+        self.alloc,
+        try .init(
+            self.font_lib,
+            font.embedded.glasstty_soft,
+            load_options.faceOptions(),
+        ),
+        .{
+            .style = .italic,
+            .fallback = true,
+            .size_adjustment = font.default_fallback_adjustment,
+        },
+    );
+    _ = try c.add(
+        self.alloc,
+        try .init(
+            self.font_lib,
+            font.embedded.glasstty_soft,
+            load_options.faceOptions(),
+        ),
+        .{
+            .style = .bold_italic,
+            .fallback = true,
+            .size_adjustment = font.default_fallback_adjustment,
+        },
+    );
+
+    // Secondary built-in fallback for missing glyph coverage
     _ = try c.add(
         self.alloc,
         try .init(
