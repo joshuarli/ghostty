@@ -3,8 +3,8 @@
 ## Status
 
 Goal: `src/apprt/wayland/` native Wayland runtime in this fork, musl, no GTK/X11/D-Bus, single window, GPU dmabuf + shm fallback, QEMU-proven.
-Base: `d1b1ba52c`, tree clean. No slices accepted, none red, none parked.
-Next: L0 provision Zig and record GTK baseline, then W1 runtime stub.
+Base: `d1b1ba52c`, tree at W1. Accepted: L0 (Zig 0.17.0 provisioned, wayland Debug 141.9M, NEEDED=libEGL+musl only), W1 (Runtime.wayland + stub builds, `--version`=.wayland). Red: none. Parked: none.
+Next: W2 window+present (real xdg-shell + dmabuf/shm present).
 Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `zig version`.
 
 ## Charter

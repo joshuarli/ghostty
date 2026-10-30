@@ -11,6 +11,11 @@ pub const Runtime = enum {
     /// approach to building the application.
     gtk,
 
+    /// Laputa. Minimal native Wayland frontend reusing the Ghostty
+    /// core (terminal, renderer, config). Single window, no GTK,
+    /// no X11, no D-Bus.
+    wayland,
+
     pub fn default(target: std.Target) Runtime {
         return switch (target.os.tag) {
             // The Linux and FreeBSD default is GTK because it is a full
