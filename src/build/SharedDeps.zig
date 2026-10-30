@@ -668,8 +668,10 @@ pub fn add(
             .flags = &.{},
         });
 
-        // Link EGL for GTK.
-        if (self.config.app_runtime == .gtk) {
+        // Link EGL for GTK and Wayland runtimes.
+        if (self.config.app_runtime == .gtk or
+            self.config.app_runtime == .wayland)
+        {
             step.root_module.addCSourceFile(.{
                 .file = b.path("vendor/glad/src/glad_egl.c"),
                 .flags = &.{},
@@ -697,6 +699,7 @@ pub fn add(
         switch (self.config.app_runtime) {
             .none => {},
             .gtk => try self.addGtk(step),
+            .wayland => try self.addWayland(step),
         }
     }
 
@@ -705,6 +708,63 @@ pub fn add(
     self.framedata.addImport(step);
 
     return static_libs;
+}
+
+/// Setup the dependencies for the minimal Wayland apprt build.
+/// No GTK, no Adwaita, no D-Bus: wayland-client + xkbcommon + EGL only.
+fn addWayland(
+    self: *const SharedDeps,
+    step: *std.Build.Step.Compile,
+) !void {
+    const b = step.step.owner;
+    const target = step.root_module.resolved_target.?;
+    const optimize = step.root_module.optimize.?;
+    _ = optimize;
+
+    step.root_module.linkSystemLibrary("wayland-client", dynamic_link_opts);
+    step.root_module.linkSystemLibrary("xkbcommon", dynamic_link_opts);
+
+    const wayland_dep_ = b.lazyDependency("wayland", .{});
+    const wayland_protocols_dep_ = b.lazyDependency("wayland_protocols", .{});
+    const zig_wayland_import_ = b.lazyImport(
+        @import("../../build.zig"),
+        "zig_wayland",
+    );
+    const zig_wayland_dep_ = b.lazyDependency("zig_wayland", .{});
+    const wayland_dep = wayland_dep_ orelse return;
+    const wayland_protocols_dep = wayland_protocols_dep_ orelse return;
+    const zig_wayland_import = zig_wayland_import_ orelse return;
+    const zig_wayland_dep = zig_wayland_dep_ orelse return;
+    _ = self;
+
+    const Scanner = zig_wayland_import.Scanner;
+    const scanner = Scanner.create(zig_wayland_dep.builder, .{
+        .wayland_xml = wayland_dep.path("protocol/wayland.xml"),
+        .wayland_protocols = wayland_protocols_dep.path(""),
+    });
+
+    scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
+    scanner.addSystemProtocol("staging/fractional-scale/fractional-scale-v1.xml");
+    scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
+    scanner.addSystemProtocol("staging/xdg-activation/xdg-activation-v1.xml");
+    scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
+
+    scanner.generate("wl_compositor", 4);
+    scanner.generate("wl_seat", 9);
+    scanner.generate("wl_shm", 1);
+    scanner.generate("xdg_wm_base", 6);
+    scanner.generate("wp_fractional_scale_manager_v1", 1);
+    scanner.generate("wp_viewporter", 1);
+    scanner.generate("zwp_linux_dmabuf_v1", 4);
+    scanner.generate("xdg_activation_v1", 1);
+
+    step.root_module.addImport("wayland", b.createModule(.{
+        .root_source_file = scanner.result,
+    }));
+
+    if (target.result.os.tag == .linux) {
+        step.root_module.addIncludePath(b.path("src/apprt/wayland"));
+    }
 }
 
 /// Setup the dependencies for the GTK apprt build.
