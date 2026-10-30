@@ -22,6 +22,7 @@ env:
   APP_NAME: Ghostty Custom
   BUNDLE_ID: com.joshuarli.ghostty-custom
   ARTIFACT: Ghostty-Custom-aarch64-apple-darwin.dmg
+  LINUX_ARTIFACT: ghostty-custom-x86_64-linux-musl.tar.gz
 
 jobs:
   build:
@@ -77,6 +78,62 @@ jobs:
           name: ghostty-custom-aarch64-apple-darwin
           path: ${{ env.ARTIFACT }}
 
+  linux:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+    container: alpine:edge
+    permissions:
+      actions: write
+      contents: read
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig
+    steps:
+      - uses: actions/checkout@3d3c42e5aacba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain and dependencies
+        run: |
+          apk add --no-cache curl xz git clang cmake ninja make pkg-config \
+            wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses
+          curl -fsSL -o zig.tar.xz https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
+          echo "1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026  zig.tar.xz" | sha256sum -c -
+          tar -xf zig.tar.xz -C /opt
+          ln -s /opt/zig-x86_64-linux-0.17.0/zig /usr/local/bin/zig
+          zig version
+
+      - name: Cache Zig
+        uses: actions/cache@55cc8345863c7cc64b66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/zig
+            .zig-cache
+          key: zig-Linux-${{ hashFiles('build.zig.zon') }}
+
+      - name: Build Laputa Wayland binary
+        run: |
+          zig build -Dapp-runtime=wayland -Doptimize=ReleaseFast -Dstrip=true \
+            -Demit-themes=false -Di18n=false
+
+      - name: Verify musl static-ish binary
+        run: |
+          file zig-out/bin/ghostty | tee file.txt
+          grep -q "ELF 64-bit LSB.*x86-64" file.txt
+          grep -q "musl" file.txt || readelf -l zig-out/bin/ghostty | grep -q "ld-musl-x86_64"
+          readelf -d zig-out/bin/ghostty | tee dyn.txt
+          test "$(grep -c NEEDED dyn.txt)" -le 5
+          ! grep NEEDED dyn.txt | grep -Ei "gtk|adwaita|glib|X11|libGL\.|libc\.so\.6"
+          ./zig-out/bin/ghostty --version | grep -q "wayland"
+          ./zig-out/bin/ghostty +show-config > /dev/null
+
+      - name: Package binary
+        run: tar czf "${{ env.LINUX_ARTIFACT }}" -C zig-out/bin ghostty
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ghostty-custom-x86_64-linux-musl
+          path: ${{ env.LINUX_ARTIFACT }}
+
   release:
     name: Create pre-release
     needs: build
@@ -94,7 +151,7 @@ jobs:
 
       - name: Checksum manifest
         run: |
-          (cd dist && shasum -a 256 "$ARTIFACT" > SHA256SUMS)
+          (cd dist && shasum -a 256 "$ARTIFACT" "$LINUX_ARTIFACT" > SHA256SUMS)
           cat dist/SHA256SUMS
           printf '%s\n' "$GITHUB_SHA" > dist/COMMIT
 
@@ -104,20 +161,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: release-${{ github.sha }}
         run: |
-          gh release create "$RELEASE_TAG" dist/"$ARTIFACT" dist/SHA256SUMS dist/COMMIT \
+          gh release create "$RELEASE_TAG" dist/"$ARTIFACT" dist/"$LINUX_ARTIFACT" dist/SHA256SUMS dist/COMMIT \
             --repo "$GITHUB_REPOSITORY" \
             --prerelease \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_TAG" \
-            --notes "Ad-hoc signed macOS arm64 build of Ghostty Custom at commit $GITHUB_SHA. Not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once."
+            --notes "Ad-hoc signed macOS arm64 build and musl x86_64 Laputa Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux tarball holds a mostly-static musl binary (dynamic libEGL, libwayland-client, libxkbcommon only); run it under any Wayland compositor."
 
       - name: Publish versioned release
         if: ${{ inputs.release_tag != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ inputs.release_tag }}" dist/"$ARTIFACT" dist/SHA256SUMS dist/COMMIT \
+          gh release create "${{ inputs.release_tag }}" dist/"$ARTIFACT" dist/"$LINUX_ARTIFACT" dist/SHA256SUMS dist/COMMIT \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "${{ inputs.release_tag }}" \
-            --notes "Ad-hoc signed macOS arm64 build of Ghostty Custom at commit $GITHUB_SHA. Not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once."
+            --notes "Ad-hoc signed macOS arm64 build and musl x86_64 Laputa Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux tarball holds a mostly-static musl binary (dynamic libEGL, libwayland-client, libxkbcommon only); run it under any Wayland compositor."
