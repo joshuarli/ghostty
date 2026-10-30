@@ -4,6 +4,7 @@ const CoreSurface = @import("../../Surface.zig");
 const ApprtApp = @import("App.zig");
 const renderer = @import("../../renderer.zig");
 const global = @import("../../global.zig");
+const Window = @import("window.zig").Window;
 
 const log = std.log.scoped(.wayland);
 
@@ -11,6 +12,7 @@ pub const Surface = @This();
 
 app: *ApprtApp,
 core_surface: CoreSurface,
+window: ?*Window,
 title: ?[:0]const u8,
 size: apprt.SurfaceSize,
 content_scale: apprt.ContentScale,
@@ -20,6 +22,7 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
     self.* = .{
         .app = app,
         .core_surface = undefined,
+        .window = null,
         .title = null,
         .size = .{ .width = 800, .height = 600 },
         .content_scale = .{ .x = 1, .y = 1 },
@@ -27,6 +30,18 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
     };
     try app.core_app.addSurface(self);
     errdefer app.core_app.deleteSurface(self);
+
+    if (app.conn) |conn| {
+        const win = try Window.create(
+            app.core_app.alloc,
+            conn,
+            "com.mitchellh.ghostty",
+            "Ghostty",
+        );
+        errdefer win.destroy();
+        self.window = win;
+        self.size = .{ .width = win.width, .height = win.height };
+    }
 
     var config = try apprt.surface.newConfig(
         app.core_app,
@@ -42,11 +57,19 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
         app,
         self,
     );
+    self.core_surface.reportPresentationHealth(.unhealthy);
+    if (self.window) |win| {
+        self.updateSize(win.width, win.height);
+    }
 }
 
 pub fn deinit(self: *Surface) void {
     if (self.title) |v| self.app.core_app.alloc.free(v);
     self.title = null;
+    if (self.window) |win| {
+        win.destroy();
+        self.window = null;
+    }
     self.app.core_app.deleteSurface(self);
     self.core_surface.deinit();
 }
@@ -145,4 +168,29 @@ pub fn updateSize(self: *Surface, width: u32, height: u32) void {
     self.core_surface.sizeCallback(self.size) catch |err| {
         log.err("size callback failed err={}", .{err});
     };
+}
+
+pub fn present(self: *Surface) void {
+    const win = self.window orelse return;
+    if (win.closed) {
+        self.app.running = false;
+        return;
+    }
+    if (win.width != self.size.width or win.height != self.size.height) {
+        self.updateSize(win.width, win.height);
+    }
+    const frame = self.core_surface.renderer.takeFrame() orelse return;
+    defer frame.deinit();
+    switch (frame) {
+        .memory => |mem| {
+            win.presentMemory(mem.pixels, mem.width, mem.height) catch |err| {
+                log.warn("shm present failed err={}", .{err});
+            };
+        },
+        .dmabuf => |dm| {
+            var m = dm;
+            m.deinit();
+            self.core_surface.reportPresentationHealth(.unhealthy);
+        },
+    }
 }

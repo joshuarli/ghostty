@@ -3,9 +3,9 @@
 ## Status
 
 Goal: `src/apprt/wayland/` native Wayland runtime in this fork, musl, no GTK/X11/D-Bus, single window, GPU dmabuf + shm fallback, QEMU-proven.
-Base: `d1b1ba52c`, tree at W1. Accepted: L0 (Zig 0.17.0 provisioned, wayland Debug 141.9M, NEEDED=libEGL+musl only), W1 (Runtime.wayland + stub builds, `--version`=.wayland). Red: none. Parked: none.
-Next: W2 window+present (real xdg-shell + dmabuf/shm present).
-Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `zig version`.
+Base: `d1b1ba52c`, tree at W2. Accepted: L0, W1, W2 (xdg-shell window opens under headless weston, shm present via readback, `smoke-present.sh` PASS, `test -Dtest-filter=wayland` exit 0). Red: none. Parked: none.
+Next: W3 input+clipboard (wl_seat, xkbcommon, Kitty encode, paste roundtrip).
+Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `sh .work/smoke-present.sh`.
 
 ## Charter
 
