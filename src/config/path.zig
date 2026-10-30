@@ -30,7 +30,16 @@ pub const Path = union(enum) {
     }
 
     pub fn equal(self: Path, other: Path) bool {
-        return std.meta.eql(self, other);
+        return switch (self) {
+            .optional => |path| switch (other) {
+                .optional => |other_path| std.mem.eql(u8, path, other_path),
+                .required => false,
+            },
+            .required => |path| switch (other) {
+                .required => |other_path| std.mem.eql(u8, path, other_path),
+                .optional => false,
+            },
+        };
     }
 
     /// ghostty_config_path_s

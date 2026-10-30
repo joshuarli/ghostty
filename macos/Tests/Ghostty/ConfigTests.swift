@@ -106,9 +106,9 @@ struct ConfigTests {
         #expect(config.macosTitlebarStyle == expected)
     }
 
-    @Test func resizeOverlayDefaultsToAfterFirst() throws {
+    @Test func resizeOverlayDefaultsToNever() throws {
         let config = try TemporaryConfig("")
-        #expect(config.resizeOverlay == .after_first)
+        #expect(config.resizeOverlay == .never)
     }
 
     @Test(arguments: [
@@ -141,9 +141,9 @@ struct ConfigTests {
         #expect(config.macosWindowButtons == .visible)
     }
 
-    @Test func scrollbarDefaultsToSystem() throws {
+    @Test func scrollbarDefaultsToNever() throws {
         let config = try TemporaryConfig("")
-        #expect(config.scrollbar == .system)
+        #expect(config.scrollbar == .never)
     }
 
     @Test func scrollbarSetToNever() throws {
