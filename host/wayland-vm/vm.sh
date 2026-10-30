@@ -194,7 +194,7 @@ setup() {
 	cp "$key.pub" "$work/share/id_ed25519.pub"
 	printf 'font-size = 14\n' >"$work/share/config"
 	qemu-img create -q -f qcow2 "$disk" 8G
-	dd if=/dev/zero of="$work/vars.fd" bs=1048576 count=64 2>/dev/null
+	truncate -s "$(stat -c%s /usr/share/qemu/edk2-x86_64-code.fd)" "$work/vars.fd"
 	qemu="$(qemu_base) -drive file=$work/$iso,if=virtio,media=cdrom,readonly=on"
 	say 'installing Alpine'
 	boot; login; answer_setup; poweroff
