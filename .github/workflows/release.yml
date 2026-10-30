@@ -31,8 +31,6 @@ jobs:
     permissions:
       actions: write
       contents: read
-    env:
-      ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,22 +76,24 @@ jobs:
     permissions:
       actions: write
       contents: read
-    env:
-      ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install toolchain and dependencies
+        shell: sh
         run: |
-          apk add --no-cache git xz file binutils clang cmake ninja make pkg-config \
+          apk add --no-cache bash git xz file binutils clang cmake ninja make pkg-config \
             wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.17.0
           cache-key: laputa-x86_64-linux-musl
+
+      - name: Verify Zig in container PATH
+        run: zig version
 
       - name: Build Laputa Wayland binary
         run: |
