@@ -7,6 +7,7 @@ const spvcross = @import("spirv_cross");
 const configpkg = @import("../config.zig");
 const compat_file = @import("../lib/compat/file.zig");
 const global = @import("../global.zig");
+const internal_os = @import("../os/main.zig");
 
 const log = std.log.scoped(.shadertoy);
 
@@ -55,7 +56,21 @@ pub fn loadFromFiles(
     defer list.deinit(alloc_gpa);
     errdefer for (list.items) |shader| alloc_gpa.free(shader);
 
-    for (paths.value.items) |item| {
+    // Personal fork default: with no configured shader, use the Black
+    // Phosphor pulse shader from the user config dir when present.
+    // An explicit custom-shader always wins; a missing file loads
+    // nothing, same as an unset option.
+    var items: []const configpkg.Path = paths.value.items;
+    var default_item: [1]configpkg.Path = undefined;
+    var default_buf: [std.Io.Dir.max_path_bytes + 1]u8 = undefined;
+    if (items.len == 0) {
+        if (defaultShaderPath(&default_buf)) |path| {
+            default_item[0] = .{ .optional = path };
+            items = &default_item;
+        }
+    }
+
+    for (items) |item| {
         const path, const optional = switch (item) {
             .optional => |path| .{ path, true },
             .required => |path| .{ path, false },
@@ -73,6 +88,28 @@ pub fn loadFromFiles(
     }
 
     return try list.toOwnedSlice(alloc_gpa);
+}
+
+/// Resolve the personal default shader under the user config dir.
+/// Returns null when the directory or file is unavailable. The buffer
+/// must hold a full path plus a sentinel byte.
+fn defaultShaderPath(buf: []u8) ?[:0]const u8 {
+    var environ_map = global.environMap() catch return null;
+    defer environ_map.deinit();
+    const dir = internal_os.xdg.config(
+        global.io(),
+        std.heap.c_allocator,
+        &environ_map,
+        .{ .subdir = "ghostty/shaders" },
+    ) catch return null;
+    defer std.heap.c_allocator.free(dir);
+    const path = std.fmt.bufPrint(buf[0 .. buf.len - 1], "{s}/black-phosphor-pulse.glsl", .{dir}) catch return null;
+    buf[path.len] = 0;
+    const result = buf[0..path.len :0];
+    const cwd = std.Io.Dir.cwd();
+    const file = cwd.openFile(global.io(), result, .{}) catch return null;
+    file.close(global.io());
+    return result;
 }
 
 /// Load a single shader from a file and convert it to the target language
