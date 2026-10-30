@@ -41,14 +41,7 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.17.0
-
-      - name: Cache Zig
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/zig
-            .zig-cache
-          key: zig-${{ runner.os }}-${{ hashFiles('build.zig.zon') }}
+          cache-key: ghosttykit-aarch64-macos
 
       - name: Build GhosttyKit
         run: zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos.27.0 -Dxcframework-target=native -Demit-macos-app=false -Dsentry=false
@@ -88,27 +81,19 @@ jobs:
     env:
       ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig
     steps:
-      - uses: actions/checkout@3d3c42e5aacba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install toolchain and dependencies
         run: |
-          apk add --no-cache curl xz git clang cmake ninja make pkg-config \
+          apk add --no-cache git xz file binutils clang cmake ninja make pkg-config \
             wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses
-          curl -fsSL -o zig.tar.xz https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
-          echo "1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026  zig.tar.xz" | sha256sum -c -
-          tar -xf zig.tar.xz -C /opt
-          ln -s /opt/zig-x86_64-linux-0.17.0/zig /usr/local/bin/zig
-          zig version
 
-      - name: Cache Zig
-        uses: actions/cache@55cc8345863c7cc64b66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          path: |
-            ~/.cache/zig
-            .zig-cache
-          key: zig-Linux-${{ hashFiles('build.zig.zon') }}
+          version: 0.17.0
+          cache-key: laputa-x86_64-linux-musl
 
       - name: Build Laputa Wayland binary
         run: |
@@ -136,7 +121,7 @@ jobs:
 
   release:
     name: Create pre-release
-    needs: build
+    needs: [build, linux]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
