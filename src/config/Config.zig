@@ -271,7 +271,7 @@ language: ?[:0]const u8 = null,
 @"font-size": f32 = switch (builtin.target.os.tag) {
     // On macOS we default a little bigger since this tends to look better. This
     // is purely subjective but this is easy to modify.
-    .macos => 13,
+    .macos => 16,
     else => 12,
 },
 
@@ -598,7 +598,9 @@ language: ?[:0]const u8 = null,
 /// be fixed in a future update:
 ///
 ///   - macOS: titlebar tabs style is not updated when switching themes.
-theme: ?Theme = null,
+///
+/// Personal fork default: Black Phosphor for both modes.
+theme: ?Theme = .{ .light = "Black Phosphor", .dark = "Black Phosphor" },
 
 /// Background color for the window.
 /// Specified as either hex (`#RRGGBB` or `RRGGBB`) or a named X11 color.
@@ -10761,6 +10763,21 @@ test "foreground-color-transition defaults disabled, parses, clamps" {
             cfg.@"foreground-color-transition".duration,
         );
     }
+}
+
+test "personal defaults" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var cfg = try Config.default(alloc);
+    defer cfg.deinit();
+    const theme = cfg.theme orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("Black Phosphor", theme.light);
+    try testing.expectEqualStrings("Black Phosphor", theme.dark);
+    if (comptime builtin.target.os.tag == .macos) {
+        try testing.expectEqual(@as(f32, 16), cfg.@"font-size");
+    }
+    var cloned = try cfg.clone(alloc);
+    defer cloned.deinit();
 }
 
 test "keyboard-sound config" {

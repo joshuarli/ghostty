@@ -673,7 +673,15 @@ pub const Key = struct {
 
         var descriptors: std.ArrayList(discovery.Descriptor) = .empty;
         defer descriptors.deinit(alloc);
-        for (config.@"font-family".list.items) |family| {
+        // Personal fork default: with no configured regular family,
+        // discover Glass TTY Soft, matching an explicit
+        // `font-family = "Glass TTY Soft"`. An explicit family always
+        // wins; a missing system font warns and falls back as usual.
+        const regular_families: []const [:0]const u8 = if (config.@"font-family".list.items.len == 0)
+            &[_][:0]const u8{"Glass TTY Soft"}
+        else
+            config.@"font-family".list.items;
+        for (regular_families) |family| {
             try descriptors.append(alloc, .{
                 .family = family,
                 .style = config.@"font-style".nameValue(),
