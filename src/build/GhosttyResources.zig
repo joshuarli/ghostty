@@ -106,6 +106,18 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty
         try steps.append(b.allocator, &install_step.step);
     }
 
+    // Personal themes baked into the build so the default theme is
+    // available on a fresh install without user config. Always
+    // installed because the default config depends on it, independent
+    // of emit-themes.
+    {
+        const install_step = b.addInstallFile(
+            b.path("dist/themes/Black Phosphor"),
+            "share/ghostty/themes/Black Phosphor",
+        );
+        try steps.append(b.allocator, &install_step.step);
+    }
+
     // Themes
     if (cfg.emit_themes) {
         if (b.lazyDependency("iterm2_themes", .{})) |upstream| {
