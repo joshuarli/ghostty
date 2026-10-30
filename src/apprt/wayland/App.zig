@@ -7,6 +7,7 @@ const Config = configpkg.Config;
 const input = @import("../../input.zig");
 const Surface = @import("Surface.zig");
 const Connection = @import("connection.zig").Connection;
+const Seat = @import("seat.zig").Seat;
 
 const log = std.log.scoped(.wayland);
 
@@ -15,6 +16,7 @@ pub const App = @This();
 core_app: *CoreApp,
 config: Config,
 conn: ?*Connection,
+seat: ?*Seat,
 running: bool,
 surface: ?*Surface,
 
@@ -26,6 +28,7 @@ pub fn init(self: *App, core_app: *CoreApp, opts: struct {}) !void {
         .core_app = core_app,
         .config = config,
         .conn = null,
+        .seat = null,
         .running = false,
         .surface = null,
     };
@@ -36,6 +39,10 @@ pub fn terminate(self: *App) void {
         s.deinit();
         self.core_app.alloc.destroy(s);
         self.surface = null;
+    }
+    if (self.seat) |st| {
+        st.deinit();
+        self.seat = null;
     }
     if (self.conn) |c| {
         c.disconnect();
@@ -69,8 +76,29 @@ pub fn run(self: *App) !void {
     };
     self.conn = conn;
 
+    if (conn.globals.seat) |wl_seat| {
+        const st = try Seat.init(alloc, wl_seat, .{
+            .key_fn = onKey,
+            .key_ud = self,
+            .mouse_button_fn = onMouseButton,
+            .mouse_button_ud = self,
+            .scroll_fn = onScroll,
+            .scroll_ud = self,
+            .cursor_fn = onCursor,
+            .cursor_ud = self,
+            .focus_fn = onFocus,
+            .focus_ud = self,
+        });
+        errdefer st.deinit();
+        self.seat = st;
+    }
+
     self.running = true;
     self.newWindow() catch |err| {
+        if (self.seat) |st| {
+            st.deinit();
+            self.seat = null;
+        }
         self.conn = null;
         conn_connected = false;
         conn.disconnect();
@@ -159,4 +187,50 @@ pub fn performIpc(
 
 pub fn redrawInspector(_: *App, surface: *Surface) void {
     _ = surface;
+}
+
+fn onKey(ud: ?*anyopaque, event: input.KeyEvent) bool {
+    const self: *App = @ptrCast(@alignCast(ud orelse return false));
+    const s = self.surface orelse return false;
+    if (event.action == .release) {
+        _ = s.handleKey(event);
+        return false;
+    }
+    if (self.core_app.keyEvent(self, event)) return true;
+    return s.handleKey(event);
+}
+
+fn onMouseButton(
+    ud: ?*anyopaque,
+    action: input.MouseButtonState,
+    button: input.MouseButton,
+    mods: input.Mods,
+) bool {
+    const self: *App = @ptrCast(@alignCast(ud orelse return false));
+    const s = self.surface orelse return false;
+    return s.handleMouseButton(action, button, mods);
+}
+
+fn onScroll(
+    ud: ?*anyopaque,
+    xoff: f64,
+    yoff: f64,
+    mods: input.ScrollMods,
+) void {
+    const self: *App = @ptrCast(@alignCast(ud orelse return));
+    const s = self.surface orelse return;
+    s.handleScroll(xoff, yoff, mods);
+}
+
+fn onCursor(ud: ?*anyopaque, x: f64, y: f64, mods: input.Mods) void {
+    const self: *App = @ptrCast(@alignCast(ud orelse return));
+    const s = self.surface orelse return;
+    s.handleCursor(x, y, mods);
+}
+
+fn onFocus(ud: ?*anyopaque, focused: bool) void {
+    const self: *App = @ptrCast(@alignCast(ud orelse return));
+    self.core_app.focusEvent(focused);
+    const s = self.surface orelse return;
+    s.handleFocus(focused);
 }
