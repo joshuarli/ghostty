@@ -21,7 +21,7 @@ defaults:
 env:
   APP_NAME: Ghostty Custom
   BUNDLE_ID: com.joshuarli.ghostty-custom
-  ARTIFACT: Ghostty-Custom-aarch64-apple-darwin.zip
+  ARTIFACT: Ghostty-Custom-aarch64-apple-darwin.dmg
 
 jobs:
   build:
@@ -70,7 +70,7 @@ jobs:
           rm -rf pkg
           mkdir pkg
           ditto "macos/build/ReleaseLocal/Ghostty.app" "pkg/$APP_NAME.app"
-          ditto -c -k --sequesterRsrc --keepParent "pkg/$APP_NAME.app" "$ARTIFACT"
+          ./dist/macos/make-dmg.sh "pkg/$APP_NAME.app" "$ARTIFACT" "$APP_NAME"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -109,7 +109,7 @@ jobs:
             --prerelease \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_TAG" \
-            --notes "Ad-hoc signed macOS arm64 build of Ghostty Custom at commit $GITHUB_SHA. Not notarized; not an official Ghostty release."
+            --notes "Ad-hoc signed macOS arm64 build of Ghostty Custom at commit $GITHUB_SHA. Not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once."
 
       - name: Publish versioned release
         if: ${{ inputs.release_tag != '' }}
@@ -120,4 +120,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "${{ inputs.release_tag }}" \
-            --notes "Ad-hoc signed macOS arm64 build of Ghostty Custom at commit $GITHUB_SHA. Not notarized; not an official Ghostty release."
+            --notes "Ad-hoc signed macOS arm64 build of Ghostty Custom at commit $GITHUB_SHA. Not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once."
