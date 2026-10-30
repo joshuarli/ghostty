@@ -84,7 +84,7 @@ jobs:
       - name: Install toolchain and dependencies
         shell: sh
         run: |
-          apk add --no-cache bash git xz file binutils clang cmake ninja make pkg-config \
+          apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig \
             wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
