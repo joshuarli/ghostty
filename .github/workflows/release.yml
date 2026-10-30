@@ -1,0 +1,81 @@
+name: release
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.head_ref || github.run_id }}"
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  build:
+    name: Build
+    runs-on: xcode-27
+    permissions:
+      actions: write
+      contents: read
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ~/.cache/zig
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.17.0
+
+      - name: Cache Zig
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/zig
+            .zig-cache
+          key: zig-${{ runner.os }}-${{ hashFiles('build.zig.zon') }}
+
+      - name: Build GhosttyKit
+        run: zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos -Dxcframework-target=native -Demit-macos-app=false -Dsentry=false
+
+      - name: Build Ghostty.app
+        working-directory: macos
+        run: xcodebuild -target Ghostty -configuration ReleaseLocal -arch arm64 MACOSX_DEPLOYMENT_TARGET=27.0
+
+      - name: Package app
+        run: ditto -c -k --sequesterRsrc --keepParent macos/build/ReleaseLocal/Ghostty.app ghostty-aarch64-apple-darwin.zip
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ghostty-aarch64-apple-darwin
+          path: ghostty-aarch64-apple-darwin.zip
+
+  release:
+    name: Create pre-release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ghostty-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: release-${{ github.sha }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG"
