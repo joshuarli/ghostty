@@ -731,6 +731,7 @@ fn addWayland(
         .target = target,
         .optimize = optimize,
         .link_system_libs = &.{"xkbcommon"},
+        .system_include_paths = &.{.{ .cwd_relative = "/usr/include" }},
     });
 
     const wayland_dep_ = b.lazyDependency("wayland", .{});
