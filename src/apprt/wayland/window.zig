@@ -5,6 +5,7 @@ const libc = std.c;
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const xdg = wayland.client.xdg;
+const wp = wayland.client.wp;
 
 const Connection = @import("connection.zig").Connection;
 
@@ -16,6 +17,9 @@ pub const Window = struct {
     surface: *wl.Surface,
     xdg_surface: *xdg.Surface,
     toplevel: *xdg.Toplevel,
+    fractional: ?*wp.FractionalScaleV1,
+    viewport: ?*wp.Viewport,
+    scale_num: u32,
     configured: bool,
     width: u32,
     height: u32,
@@ -58,6 +62,9 @@ pub const Window = struct {
             .surface = surface,
             .xdg_surface = xdg_surface,
             .toplevel = toplevel,
+            .fractional = null,
+            .viewport = null,
+            .scale_num = 120,
             .configured = false,
             .width = 800,
             .height = 600,
@@ -75,6 +82,24 @@ pub const Window = struct {
         xdg_surface.setListener(*Window, onXdgSurfaceEvent, self);
         toplevel.setListener(*Window, onToplevelEvent, self);
 
+        if (conn.globals.fractional_manager) |mgr| {
+            const frac: ?*wp.FractionalScaleV1 = mgr.getFractionalScale(surface) catch |err| blk: {
+                log.warn("fractional_scale failed err={}", .{err});
+                break :blk null;
+            };
+            if (frac) |f| {
+                f.setListener(*Window, onFractionalEvent, self);
+                self.fractional = f;
+            }
+        }
+        if (conn.globals.viewporter) |vp| {
+            const port: ?*wp.Viewport = vp.getViewport(surface) catch |err| blk: {
+                log.warn("getViewport failed err={}", .{err});
+                break :blk null;
+            };
+            self.viewport = port;
+        }
+
         var i: usize = 0;
         while (i < 50 and !self.configured) : (i += 1) {
             _ = conn.display.dispatch();
@@ -91,10 +116,16 @@ pub const Window = struct {
         if (self.pool) |p| p.destroy();
         if (self.shm_data.len > 0) posix.munmap(@alignCast(self.shm_data));
         if (self.shm_fd >= 0) _ = libc.close(self.shm_fd);
+        if (self.fractional) |f| f.destroy();
+        if (self.viewport) |v| v.destroy();
         self.toplevel.destroy();
         self.xdg_surface.destroy();
         self.surface.destroy();
         self.alloc.destroy(self);
+    }
+
+    pub fn scale(self: *const Window) f64 {
+        return @as(f64, @floatFromInt(self.scale_num)) / 120.0;
     }
 
     pub fn presentMemory(
@@ -212,4 +243,17 @@ fn onFrameEvent(
     _ = event;
     cb.destroy();
     win.frame_pending = false;
+}
+
+fn onFractionalEvent(
+    frac: *wp.FractionalScaleV1,
+    event: wp.FractionalScaleV1.Event,
+    win: *Window,
+) void {
+    _ = frac;
+    switch (event) {
+        .preferred_scale => |s| {
+            if (s.scale > 0) win.scale_num = s.scale;
+        },
+    }
 }

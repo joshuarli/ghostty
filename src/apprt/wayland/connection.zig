@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const xdg = wayland.client.xdg;
+const wp = wayland.client.wp;
 
 const log = std.log.scoped(.wayland);
 
@@ -11,6 +12,8 @@ pub const Globals = struct {
     shm: ?*wl.Shm = null,
     wm_base: ?*xdg.WmBase = null,
     seat: ?*wl.Seat = null,
+    fractional_manager: ?*wp.FractionalScaleManagerV1 = null,
+    viewporter: ?*wp.Viewporter = null,
 
     pub fn deinit(self: *Globals) void {
         _ = self;
@@ -47,6 +50,8 @@ pub const Connection = struct {
         if (self.globals.seat) |v| v.release();
         if (self.globals.shm) |v| v.destroy();
         if (self.globals.compositor) |v| v.destroy();
+        if (self.globals.fractional_manager) |v| v.destroy();
+        if (self.globals.viewporter) |v| v.destroy();
         self.registry.destroy();
         self.display.disconnect();
         self.globals.deinit();
@@ -111,6 +116,20 @@ fn bindGlobal(
     } else if (std.mem.eql(u8, span, "wl_seat")) {
         if (conn.globals.seat != null) return;
         conn.globals.seat = try registry.bind(name, wl.Seat, @min(version, 9));
+    } else if (std.mem.eql(u8, span, "wp_fractional_scale_manager_v1")) {
+        if (conn.globals.fractional_manager != null) return;
+        conn.globals.fractional_manager = try registry.bind(
+            name,
+            wp.FractionalScaleManagerV1,
+            @min(version, 1),
+        );
+    } else if (std.mem.eql(u8, span, "wp_viewporter")) {
+        if (conn.globals.viewporter != null) return;
+        conn.globals.viewporter = try registry.bind(
+            name,
+            wp.Viewporter,
+            @min(version, 1),
+        );
     }
 }
 

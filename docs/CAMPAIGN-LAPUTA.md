@@ -3,9 +3,9 @@
 ## Status
 
 Goal: `src/apprt/wayland/` native Wayland runtime in this fork, musl, no GTK/X11/D-Bus, single window, GPU dmabuf + shm fallback, QEMU-proven.
-Base: `d1b1ba52c`, tree at W4+M1. Accepted: L0-W4 (single-window allowlist quit/new/close; show-config ok; version=.wayland; no org.gtk.Actions; M1 test-lib-vt subset exit 0). Red: none. Parked: none.
-Next: W5 scaling+graphics+fallback (fractional, Kitty graphics, forced-shm).
-Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `sh .work/smoke-present.sh`.
+Base: `d1b1ba52c`, tree at W5. Accepted: L0-W5 (fractional-scale/viewporter plumbing with graceful absence, Kitty-graphics shm run clean exit, forced-shm fallback never crashes, renderer/dmabuf/fractional tests green). Red: none. Parked: none.
+Next: W6 (ReleaseFast musl size triage) || Q1 (QEMU harness) in parallel.
+Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `sh .work/smoke-graphics.sh`.
 
 ## Charter
 

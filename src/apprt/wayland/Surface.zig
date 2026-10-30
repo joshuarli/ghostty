@@ -273,6 +273,19 @@ pub fn present(self: *Surface) void {
     if (win.width != self.size.width or win.height != self.size.height) {
         self.updateSize(win.width, win.height);
     }
+    const s: f64 = win.scale();
+    if (@abs(s - self.content_scale.x) > 0.001) {
+        self.content_scale = .{ .x = @floatCast(s), .y = @floatCast(s) };
+        self.core_surface.contentScaleCallback(self.content_scale) catch |err| {
+            log.warn("content scale failed err={}", .{err});
+        };
+        if (win.viewport) |vp| {
+            vp.setDestination(
+                @intCast(self.size.width),
+                @intCast(self.size.height),
+            );
+        }
+    }
     const frame = self.core_surface.renderer.takeFrame() orelse return;
     defer frame.deinit();
     switch (frame) {
