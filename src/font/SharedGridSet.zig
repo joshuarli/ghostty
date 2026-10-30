@@ -757,7 +757,7 @@ pub const Key = struct {
             break :set set;
         };
 
-        const regular_offset = config.@"font-family".list.items.len;
+        const regular_offset = regular_families.len;
         const bold_offset = regular_offset + config.@"font-family-bold".list.items.len;
         const italic_offset = bold_offset + config.@"font-family-italic".list.items.len;
         const bold_italic_offset = italic_offset + config.@"font-family-bold-italic".list.items.len;
@@ -881,6 +881,26 @@ test "Key different font DPI" {
     defer k2.deinit();
 
     try testing.expect(k.hashcode() != k2.hashcode());
+}
+
+test "Key defaults to Glass TTY Soft with no configured family" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var cfg = try Config.default(alloc);
+    defer cfg.deinit();
+    try testing.expectEqual(@as(usize, 0), cfg.@"font-family".list.items.len);
+
+    var keycfg = try DerivedConfig.init(alloc, &cfg);
+    defer keycfg.deinit();
+
+    var k = try Key.init(alloc, &keycfg, .{ .points = 12 });
+    defer k.deinit();
+
+    var found = false;
+    for (k.descriptorsForStyle(.regular)) |desc| {
+        if (std.mem.eql(u8, desc.family orelse "", "Glass TTY Soft")) found = true;
+    }
+    try testing.expect(found);
 }
 
 test SharedGridSet {
