@@ -14,6 +14,11 @@ const arrow_gain: f32 = 0.8;
 const arrow_pitch_left: f32 = 0.8909;
 const arrow_pitch_down: f32 = 0.9439;
 const arrow_pitch_right: f32 = 1.0595;
+const copy_pitch_first: f32 = 1.2599;
+const copy_pitch_second: f32 = 1.5874;
+const paste_pitch_first: f32 = 1.5874;
+const paste_pitch_second: f32 = 1.2599;
+const copy_paste_delay_us: u32 = 70_000;
 
 pub const flag_fn: u64 = 0x0080_0000;
 pub const dev_lctl: u64 = 0x0000_0001;
@@ -30,6 +35,7 @@ pub const code = struct {
     pub const a: u8 = 0x00;
     pub const d: u8 = 0x02;
     pub const c: u8 = 0x08;
+    pub const v: u8 = 0x09;
     pub const @"return": u8 = 0x24;
     pub const space: u8 = 0x31;
     pub const escape: u8 = 0x35;
@@ -358,6 +364,10 @@ pub const KeyState = struct {
         return self.isPressed(code.control) or self.isPressed(code.right_control);
     }
 
+    pub fn cmdHeld(self: *const KeyState) bool {
+        return self.isPressed(code.command) or self.isPressed(code.right_command);
+    }
+
     pub fn clear(self: *KeyState) void {
         self.pressed = .{ 0, 0 };
     }
@@ -471,9 +481,9 @@ pub fn handleKey(
         .flags_changed => held.flagsChanged(keycode, flags) orelse return,
     };
     if (event.down) {
-        if (voicer.key(event.keycode, true, held.ctrlHeld())) voiced.press(event.keycode);
+        if (voicer.key(event.keycode, true, held.ctrlHeld(), held.cmdHeld())) voiced.press(event.keycode);
     } else if (voiced.releaseWasVoiced(event.keycode)) {
-        _ = voicer.key(event.keycode, false, held.ctrlHeld());
+        _ = voicer.key(event.keycode, false, held.ctrlHeld(), held.cmdHeld());
     }
 }
 
@@ -482,9 +492,30 @@ const Special = struct {
     pitch: f32,
     gain: f32,
     centered: bool,
+    second_pitch: ?f32 = null,
+    second_delay_us: u32 = 0,
 };
 
-fn specialVoice(keycode: u8, ctrl_held: bool) ?Special {
+fn specialVoice(keycode: u8, ctrl_held: bool, cmd_held: bool) ?Special {
+    if (cmd_held) switch (keycode) {
+        code.c => return .{
+            .source = code.@"return",
+            .pitch = copy_pitch_first,
+            .gain = 1,
+            .centered = true,
+            .second_pitch = copy_pitch_second,
+            .second_delay_us = copy_paste_delay_us,
+        },
+        code.v => return .{
+            .source = code.@"return",
+            .pitch = paste_pitch_first,
+            .gain = 1,
+            .centered = true,
+            .second_pitch = paste_pitch_second,
+            .second_delay_us = copy_paste_delay_us,
+        },
+        else => {},
+    };
     if (ctrl_held) switch (keycode) {
         code.c => return .{ .source = code.@"return", .pitch = ctrl_c_pitch, .gain = 1, .centered = true },
         code.d => return .{ .source = code.@"return", .pitch = ctrl_d_pitch, .gain = 1, .centered = true },
@@ -530,11 +561,11 @@ pub fn Voicer(comptime capacity: usize) type {
             };
         }
 
-        pub fn key(self: *Self, keycode: u8, down: bool, ctrl_held: bool) bool {
+        pub fn key(self: *Self, keycode: u8, down: bool, ctrl_held: bool, cmd_held: bool) bool {
             _ = self.shared.key_events.fetchAdd(1, .monotonic);
             if (!self.shared.enabled.load(.monotonic) or !self.shared.ghostty_active.load(.acquire)) return false;
             if (!down and !self.shared.release.load(.monotonic)) return false;
-            if (down) if (specialVoice(keycode, ctrl_held)) |voice| return self.queueSpecial(keycode, voice);
+            if (down) if (specialVoice(keycode, ctrl_held, cmd_held)) |voice| return self.queueSpecial(keycode, voice);
             return self.queue(keycode, down, 0);
         }
 
@@ -565,12 +596,12 @@ pub fn Voicer(comptime capacity: usize) type {
         fn queueSpecial(self: *Self, keycode: u8, voice: Special) bool {
             const clips = self.pack.press(voice.source);
             if (clips.isNone()) return false;
-            const index = self.choose(voice.source, clips);
             const gains = if (voice.centered)
                 [2]f32{ 1, 1 }
             else
                 panGains(self.pan[keycode & 0x7F]);
-            return self.emit(.{
+            const index = self.choose(voice.source, clips);
+            const first = self.emit(.{
                 .samples = self.pack.clipWithGuards(index),
                 .src_rate = self.pack.sample_rate,
                 .pitch = voice.pitch,
@@ -578,6 +609,17 @@ pub fn Voicer(comptime capacity: usize) type {
                 .gain_r = voice.gain * gains[1],
                 .delay_us = 0,
             });
+            const second_pitch = voice.second_pitch orelse return first;
+            const second_index = self.choose(voice.source, clips);
+            const second = self.emit(.{
+                .samples = self.pack.clipWithGuards(second_index),
+                .src_rate = self.pack.sample_rate,
+                .pitch = second_pitch,
+                .gain_l = voice.gain * gains[0],
+                .gain_r = voice.gain * gains[1],
+                .delay_us = voice.second_delay_us,
+            });
+            return first or second;
         }
 
         fn emit(self: *Self, play: mixer.Play) bool {
@@ -835,6 +877,19 @@ test "sound: ctrl held tracks both control keys" {
     try std.testing.expect(keys_state.ctrlHeld());
 }
 
+test "sound: cmd held tracks both command keys" {
+    var keys_state: KeyState = .{};
+    try std.testing.expect(!keys_state.cmdHeld());
+    _ = keys_state.flagsChanged(code.command, 0x0010_0000 | dev_lcmd);
+    try std.testing.expect(keys_state.cmdHeld());
+    _ = keys_state.keyDown(code.c, false);
+    try std.testing.expect(keys_state.cmdHeld());
+    _ = keys_state.flagsChanged(code.command, 0);
+    try std.testing.expect(!keys_state.cmdHeld());
+    _ = keys_state.flagsChanged(code.right_command, 0x0010_0000 | dev_rcmd);
+    try std.testing.expect(keys_state.cmdHeld());
+}
+
 test "sound: voiced release matches the press that sounded" {
     var voiced: VoicedKeys = .{};
     try std.testing.expect(!voiced.releaseWasVoiced(0));
@@ -887,7 +942,7 @@ test "sound: key down queues the press clip at unity" {
     const alloc = std.testing.allocator;
     const h = try setup(alloc, false);
     defer h.deinit();
-    try std.testing.expect(h.voicer.key(code.a, true, false));
+    try std.testing.expect(h.voicer.key(code.a, true, false, false));
     const play = h.consumer.pop().?;
     try std.testing.expectEqual(pack.guard_before + 64 + pack.guard_after, play.samples.len);
     try std.testing.expectEqual(@as(f32, 1), play.pitch);
@@ -903,7 +958,7 @@ test "sound: disabled queues nothing" {
     const h = try setup(alloc, false);
     defer h.deinit();
     h.shared.enabled.store(false, .monotonic);
-    try std.testing.expect(!h.voicer.key(code.a, true, false));
+    try std.testing.expect(!h.voicer.key(code.a, true, false, false));
     try std.testing.expectEqual(@as(?mixer.Play, null), h.consumer.pop());
     try std.testing.expectEqual(@as(u64, 1), h.shared.key_events.load(.monotonic));
 }
@@ -912,13 +967,13 @@ test "sound: release sounds follow the setting and the pack" {
     const alloc = std.testing.allocator;
     const h = try setup(alloc, true);
     defer h.deinit();
-    try std.testing.expect(h.voicer.key(code.a, false, false));
+    try std.testing.expect(h.voicer.key(code.a, false, false, false));
     try std.testing.expectEqual(pack.guard_before + 32 + pack.guard_after, h.consumer.pop().?.samples.len);
     h.shared.release.store(false, .monotonic);
-    try std.testing.expect(!h.voicer.key(code.a, false, false));
+    try std.testing.expect(!h.voicer.key(code.a, false, false, false));
     const quiet = try setup(alloc, false);
     defer quiet.deinit();
-    try std.testing.expect(!quiet.voicer.key(code.a, false, false));
+    try std.testing.expect(!quiet.voicer.key(code.a, false, false, false));
 }
 
 test "sound: spatial pans left keys left and right keys right" {
@@ -926,10 +981,10 @@ test "sound: spatial pans left keys left and right keys right" {
     const h = try setup(alloc, false);
     defer h.deinit();
     h.shared.spatial.store(true, .monotonic);
-    try std.testing.expect(h.voicer.key(code.a, true, false));
+    try std.testing.expect(h.voicer.key(code.a, true, false, false));
     const left = h.consumer.pop().?;
     try std.testing.expect(left.gain_l > left.gain_r);
-    try std.testing.expect(h.voicer.key(code.@"return", true, false));
+    try std.testing.expect(h.voicer.key(code.@"return", true, false, false));
     const right = h.consumer.pop().?;
     try std.testing.expect(right.gain_r > right.gain_l);
     try std.testing.expect(@abs(left.gain_l * left.gain_l + left.gain_r * left.gain_r - 2) < 1e-4);
@@ -946,7 +1001,7 @@ test "sound: variation stays within bounds" {
     var distinct: usize = 0;
     var i: usize = 0;
     while (i < 200) : (i += 1) {
-        try std.testing.expect(h.voicer.key(code.a, true, false));
+        try std.testing.expect(h.voicer.key(code.a, true, false, false));
         const play = h.consumer.pop().?;
         try std.testing.expect(play.pitch <= max_pitch and play.pitch >= 1 / max_pitch);
         try std.testing.expect(play.gain_l <= max_gain and play.gain_l >= 1 / max_gain);
@@ -970,7 +1025,7 @@ test "sound: variants never repeat back to back" {
     var last: ?[*]const i16 = null;
     var i: usize = 0;
     while (i < 100) : (i += 1) {
-        try std.testing.expect(h.voicer.key(code.space, true, false));
+        try std.testing.expect(h.voicer.key(code.space, true, false, false));
         const ptr = h.consumer.pop().?.samples.ptr;
         try std.testing.expect(last == null or last.? != ptr);
         last = ptr;
@@ -982,8 +1037,8 @@ test "sound: a full ring drops and counts" {
     const h = try setup(alloc, false);
     defer h.deinit();
     var i: usize = 0;
-    while (i < 4) : (i += 1) try std.testing.expect(h.voicer.key(code.a, true, false));
-    try std.testing.expect(!h.voicer.key(code.a, true, false));
+    while (i < 4) : (i += 1) try std.testing.expect(h.voicer.key(code.a, true, false, false));
+    try std.testing.expect(!h.voicer.key(code.a, true, false, false));
     try std.testing.expectEqual(@as(u64, 1), h.shared.dropped.load(.monotonic));
 }
 
@@ -991,36 +1046,36 @@ test "sound: ctrl chords and arrows use the special voices" {
     const alloc = std.testing.allocator;
     const h = try setup(alloc, false);
     defer h.deinit();
-    try std.testing.expect(h.voicer.key(code.c, true, true));
+    try std.testing.expect(h.voicer.key(code.c, true, true, false));
     const ctrl_c = h.consumer.pop().?;
     try std.testing.expectEqual(ctrl_c_pitch, ctrl_c.pitch);
     try std.testing.expectEqual(@as(f32, 1), ctrl_c.gain_l);
     try std.testing.expectEqual(@as(f32, 1), ctrl_c.gain_r);
-    try std.testing.expect(h.voicer.key(code.d, true, true));
+    try std.testing.expect(h.voicer.key(code.d, true, true, false));
     try std.testing.expectEqual(ctrl_d_pitch, h.consumer.pop().?.pitch);
     try std.testing.expect(ctrl_d_pitch > ctrl_c_pitch);
     h.shared.variation.store(true, .monotonic);
     h.shared.spatial.store(true, .monotonic);
-    try std.testing.expect(h.voicer.key(code.c, true, true));
+    try std.testing.expect(h.voicer.key(code.c, true, true, false));
     const steady = h.consumer.pop().?;
     try std.testing.expectEqual(ctrl_c_pitch, steady.pitch);
     try std.testing.expectEqual(@as(f32, 1), steady.gain_l);
-    try std.testing.expect(h.voicer.key(code.c, true, false));
+    try std.testing.expect(h.voicer.key(code.c, true, false, false));
     try std.testing.expect(h.consumer.pop().?.pitch != ctrl_c_pitch);
-    try std.testing.expect(h.voicer.key(code.a, true, true));
+    try std.testing.expect(h.voicer.key(code.a, true, true, false));
     const plain = h.consumer.pop().?;
     try std.testing.expect(plain.pitch <= centsToRatio(pitch_jitter_cents));
-    try std.testing.expect(h.voicer.key(code.escape, true, false));
+    try std.testing.expect(h.voicer.key(code.escape, true, false, false));
     const esc = h.consumer.pop().?;
     try std.testing.expectEqual(esc_pitch, esc.pitch);
     try std.testing.expectEqual(esc_gain, esc.gain_l);
     try std.testing.expectEqual(esc_gain, esc.gain_r);
     const arrows = [_]u8{ code.left_arrow, code.down_arrow, code.up_arrow, code.right_arrow };
-    for (arrows) |key| try std.testing.expect(h.voicer.key(key, true, false));
+    for (arrows) |key| try std.testing.expect(h.voicer.key(key, true, false, false));
     var pitches: [4]f32 = undefined;
     for (&pitches) |*pitch| pitch.* = h.consumer.pop().?.pitch;
     try std.testing.expect(pitches[0] < pitches[1] and pitches[1] < pitches[2] and pitches[2] < pitches[3]);
-    try std.testing.expect(h.voicer.key(code.left_arrow, true, false));
+    try std.testing.expect(h.voicer.key(code.left_arrow, true, false, false));
     const arrow = h.consumer.pop().?;
     try std.testing.expectEqual(arrow_pitch_left, arrow.pitch);
     try std.testing.expect(arrow.gain_r > arrow.gain_l);
@@ -1035,6 +1090,74 @@ test "sound: ctrl chords and arrows use the special voices" {
     try std.testing.expect(@abs(semitone.of(arrow_pitch_left) + 2) < 0.01);
     try std.testing.expect(@abs(semitone.of(arrow_pitch_down) + 1) < 0.01);
     try std.testing.expect(@abs(semitone.of(arrow_pitch_right) - 1) < 0.01);
+}
+
+test "sound: cmd copy and paste use mirrored two-note chimes" {
+    const alloc = std.testing.allocator;
+    const h = try setup(alloc, false);
+    defer h.deinit();
+    try std.testing.expect(h.voicer.key(code.c, true, false, true));
+    const copy_first = h.consumer.pop().?;
+    const copy_second = h.consumer.pop().?;
+    try std.testing.expectEqual(copy_pitch_first, copy_first.pitch);
+    try std.testing.expectEqual(copy_pitch_second, copy_second.pitch);
+    try std.testing.expect(copy_second.pitch > copy_first.pitch);
+    try std.testing.expectEqual(@as(f32, 1), copy_first.gain_l);
+    try std.testing.expectEqual(@as(f32, 1), copy_first.gain_r);
+    try std.testing.expectEqual(@as(u32, 0), copy_first.delay_us);
+    try std.testing.expectEqual(copy_paste_delay_us, copy_second.delay_us);
+    try std.testing.expect(h.voicer.key(code.v, true, false, true));
+    const paste_first = h.consumer.pop().?;
+    const paste_second = h.consumer.pop().?;
+    try std.testing.expectEqual(paste_pitch_first, paste_first.pitch);
+    try std.testing.expectEqual(paste_pitch_second, paste_second.pitch);
+    try std.testing.expect(paste_second.pitch < paste_first.pitch);
+    try std.testing.expectEqual(copy_pitch_first, paste_second.pitch);
+    try std.testing.expectEqual(copy_pitch_second, paste_first.pitch);
+    try std.testing.expectEqual(copy_paste_delay_us, paste_second.delay_us);
+    try std.testing.expect(h.voicer.key(code.c, true, false, false));
+    try std.testing.expect(h.consumer.pop().?.pitch != copy_pitch_first);
+    try std.testing.expect(h.voicer.key(code.a, true, false, true));
+    const plain_cmd = h.consumer.pop().?;
+    try std.testing.expectEqual(@as(f32, 1), plain_cmd.pitch);
+    try std.testing.expectEqual(@as(?mixer.Play, null), h.consumer.pop());
+    h.shared.variation.store(true, .monotonic);
+    h.shared.spatial.store(true, .monotonic);
+    try std.testing.expect(h.voicer.key(code.c, true, false, true));
+    const steady_first = h.consumer.pop().?;
+    const steady_second = h.consumer.pop().?;
+    try std.testing.expectEqual(copy_pitch_first, steady_first.pitch);
+    try std.testing.expectEqual(copy_pitch_second, steady_second.pitch);
+    try std.testing.expectEqual(@as(f32, 1), steady_first.gain_l);
+    try std.testing.expectEqual(@as(f32, 1), steady_first.gain_r);
+    try std.testing.expect(h.voicer.key(code.c, true, true, true));
+    try std.testing.expectEqual(copy_pitch_first, h.consumer.pop().?.pitch);
+    _ = h.consumer.pop();
+    const semitone = struct {
+        fn of(pitch: f32) f32 {
+            return @log2(pitch) * 12;
+        }
+    };
+    try std.testing.expect(@abs(semitone.of(copy_pitch_first) - 4) < 0.01);
+    try std.testing.expect(@abs(semitone.of(copy_pitch_second) - 8) < 0.01);
+}
+
+test "sound: cmd copy chime follows held command keys" {
+    const alloc = std.testing.allocator;
+    const h = try setup(alloc, true);
+    defer h.deinit();
+    var keys_state: KeyState = .{};
+    var voiced: VoicedKeys = .{};
+    handleKey(&keys_state, &voiced, &h.voicer, code.command, .flags_changed, false, 0x0010_0000 | dev_lcmd);
+    try std.testing.expect(keys_state.cmdHeld());
+    _ = h.consumer.pop();
+    handleKey(&keys_state, &voiced, &h.voicer, code.c, .down, false, 0);
+    const first = h.consumer.pop().?;
+    const second = h.consumer.pop().?;
+    try std.testing.expectEqual(copy_pitch_first, first.pitch);
+    try std.testing.expectEqual(copy_pitch_second, second.pitch);
+    try std.testing.expectEqual(copy_paste_delay_us, second.delay_us);
+    try std.testing.expectEqual(@as(?mixer.Play, null), h.consumer.pop());
 }
 
 test "sound: one physical press and release" {
@@ -1090,7 +1213,7 @@ test "sound: command modifier and caps each produce one attack" {
     var voiced: VoicedKeys = .{};
     handleKey(&keys_state, &voiced, &h.voicer, code.command, .flags_changed, false, 0x0010_0000 | dev_lcmd);
     handleKey(&keys_state, &voiced, &h.voicer, code.command, .flags_changed, false, 0x0010_0000 | dev_lcmd);
-    handleKey(&keys_state, &voiced, &h.voicer, code.c, .down, false, 0);
+    handleKey(&keys_state, &voiced, &h.voicer, code.a, .down, false, 0);
     handleKey(&keys_state, &voiced, &h.voicer, code.caps_lock, .flags_changed, false, 0x0001_0000);
     handleKey(&keys_state, &voiced, &h.voicer, code.caps_lock, .flags_changed, false, 0);
     try std.testing.expect(h.consumer.pop() != null);
