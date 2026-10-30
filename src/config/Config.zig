@@ -3358,9 +3358,9 @@ keybind: Keybinds = .{},
 ///
 /// Valid values:
 ///
-///   * `off` (default)
-///   * `buckling-spring`
-@"keyboard-sound": KeyboardSound = .off,
+///   * `buckling-spring` (default)
+///   * `off`
+@"keyboard-sound": KeyboardSound = .@"buckling-spring",
 
 /// Loudness of `keyboard-sound`, from 0.0 (silent) to 1.0 (full). The default
 /// is 0.20. Perceived loudness follows a squared gain curve. Values outside
@@ -10770,7 +10770,7 @@ test "keyboard-sound config" {
     {
         var cfg = try Config.default(alloc);
         defer cfg.deinit();
-        try testing.expectEqual(KeyboardSound.off, cfg.@"keyboard-sound");
+        try testing.expectEqual(KeyboardSound.@"buckling-spring", cfg.@"keyboard-sound");
         try testing.expectEqual(@as(f64, 0.20), cfg.@"keyboard-sound-volume".value);
         try testing.expect(cfg.@"keyboard-sound-release");
         try testing.expect(cfg.@"keyboard-sound-variation");
@@ -10782,7 +10782,7 @@ test "keyboard-sound config" {
         var cfg = try Config.default(alloc);
         defer cfg.deinit();
         var it: TestIterator = .{ .data = &.{
-            "--keyboard-sound=buckling-spring",
+            "--keyboard-sound=off",
             "--keyboard-sound-volume=0.20",
             "--keyboard-sound-release=false",
             "--keyboard-sound-variation=0",
@@ -10791,7 +10791,7 @@ test "keyboard-sound config" {
         try cfg.loadIter(alloc, &it);
         try cfg.finalize();
         try testing.expect(cfg._diagnostics.empty());
-        try testing.expectEqual(KeyboardSound.@"buckling-spring", cfg.@"keyboard-sound");
+        try testing.expectEqual(KeyboardSound.off, cfg.@"keyboard-sound");
         try testing.expectEqual(@as(f64, 0.20), cfg.@"keyboard-sound-volume".value);
         try testing.expect(!cfg.@"keyboard-sound-release");
         try testing.expect(!cfg.@"keyboard-sound-variation");
@@ -10799,7 +10799,7 @@ test "keyboard-sound config" {
 
         var cloned = try cfg.clone(alloc);
         defer cloned.deinit();
-        try testing.expectEqual(KeyboardSound.@"buckling-spring", cloned.@"keyboard-sound");
+        try testing.expectEqual(KeyboardSound.off, cloned.@"keyboard-sound");
         try testing.expectEqual(@as(f64, 0.20), cloned.@"keyboard-sound-volume".value);
         try testing.expect(!cloned.@"keyboard-sound-release");
     }
@@ -10817,7 +10817,7 @@ test "keyboard-sound config" {
         var it: TestIterator = .{ .data = &.{arg} };
         try cfg.loadIter(alloc, &it);
         try cfg.finalize();
-        try testing.expectEqual(KeyboardSound.off, cfg.@"keyboard-sound");
+        try testing.expectEqual(KeyboardSound.@"buckling-spring", cfg.@"keyboard-sound");
         try testing.expectEqual(@as(f64, 0.20), cfg.@"keyboard-sound-volume".value);
         try testing.expectEqual(@as(usize, 1), cfg._diagnostics.items().len);
     }

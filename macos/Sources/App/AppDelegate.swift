@@ -629,18 +629,24 @@ class AppDelegate: NSObject,
     private func noteSoundKey(_ event: NSEvent) {
         guard let app = ghostty.app else { return }
         let action: ghostty_sound_key_action_e
+        let autorepeat: Bool
         switch event.type {
         case .keyDown:
             action = GHOSTTY_SOUND_KEY_DOWN
+            // isARepeat is only valid for key presses; reading it for
+            // releases or flag changes raises an exception.
+            autorepeat = event.isARepeat
         case .keyUp:
             action = GHOSTTY_SOUND_KEY_UP
+            autorepeat = false
         case .flagsChanged:
             action = GHOSTTY_SOUND_KEY_FLAGS_CHANGED
+            autorepeat = false
         default:
             return
         }
         let flags = event.cgEvent?.flags.rawValue ?? UInt64(event.modifierFlags.rawValue)
-        ghostty_app_sound_key(app, event.keyCode, action, event.isARepeat, flags)
+        ghostty_app_sound_key(app, event.keyCode, action, autorepeat, flags)
     }
 
     private func localEventKeyDown(_ event: NSEvent) -> NSEvent? {
