@@ -36,7 +36,7 @@ APPLICATIONS_DIR ?= $(HOME)/Applications
 install:
 	@if [ "$$(uname -s)" != Darwin ]; then echo "make install is macOS only" >&2; exit 1; fi
 	@if [ "$$(uname -m)" != arm64 ]; then echo "make install builds arm64 only, same as CI" >&2; exit 1; fi
-	zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos -Dxcframework-target=native -Demit-macos-app=false -Dsentry=false
+	zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos.27.0 -Dxcframework-target=native -Demit-macos-app=false -Dsentry=false
 	cd macos && xcodebuild -target Ghostty -configuration ReleaseLocal -arch arm64 PRODUCT_BUNDLE_IDENTIFIER="$(BUNDLE_ID)" INFOPLIST_KEY_CFBundleDisplayName="$(APP_NAME)"
 	app="macos/build/ReleaseLocal/Ghostty.app"; \
 	test -x "$$app/Contents/MacOS/ghostty"; \

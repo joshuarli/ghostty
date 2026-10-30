@@ -50,9 +50,6 @@ struct NewTerminalIntent: AppIntent {
     static var supportedModes: IntentModes = .background
 #endif
 
-    @available(macOS, obsoleted: 26.0, message: "Replaced by supportedModes")
-    static var openAppWhenRun = false
-
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<TerminalEntity?> {
         guard await requestIntentPermission() else {
