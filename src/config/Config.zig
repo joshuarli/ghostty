@@ -905,20 +905,15 @@ palette: Palette = .{},
 /// state; running programs may override the cursor style using `DECSCUSR` (`CSI
 /// q`).
 ///
-/// If this is not set, the cursor blinks by default. Note that this is not the
-/// same as a "true" value, as noted below.
-///
-/// If this is not set at all (`null`), then Ghostty will respect DEC Mode 12
-/// (AT&T cursor blink) as an alternate approach to turning blinking on/off. If
-/// this is set to any value other than null, DEC mode 12 will be ignored but
-/// `DECSCUSR` will still be respected.
+/// The default is `false`, so the cursor does not blink. Unlike an unset
+/// (`null`) value, `false` also ignores DEC Mode 12 (AT&T cursor blink).
 ///
 /// Valid values are:
 ///
 ///   * ` ` (blank)
 ///   * `true`
 ///   * `false`
-@"cursor-style-blink": ?bool = null,
+@"cursor-style-blink": ?bool = false,
 
 /// The color of the text under the cursor. If this is not set, a default will
 /// be chosen.
@@ -1456,7 +1451,7 @@ input: RepeatableReadableIO = .{},
 
 /// Control when the scrollbar is shown to scroll the scrollback buffer.
 ///
-/// The default value is `system`.
+/// The default value is `never`.
 ///
 /// Valid values:
 ///
@@ -1468,7 +1463,7 @@ input: RepeatableReadableIO = .{},
 ///   * `never` - Never show a scrollbar. You can still scroll using the mouse,
 ///     keybind actions, etc. but you will not have a visual UI widget showing
 ///     a scrollbar.
-scrollbar: Scrollbar = .system,
+scrollbar: Scrollbar = .never,
 
 /// Match a regular expression against the terminal text and associate clicking
 /// it with an action. This can be used to match URLs, file paths, etc. Actions
@@ -1508,7 +1503,7 @@ link: RepeatableLink = .{},
 /// can differ from the link destination).
 ///
 /// Available since: 1.2.0
-@"link-previews": LinkPreviews = .true,
+@"link-previews": LinkPreviews = .false,
 
 /// Whether to start the window in a maximized state. This setting applies
 /// to new windows and does not apply to tabs, splits, etc. However, this setting
@@ -1523,8 +1518,8 @@ maximize: bool = false,
 ///
 /// Allowable values are:
 ///
-///   * `false` - Don't start in fullscreen (default)
-///   * `true` - Start in native fullscreen
+///   * `false` - Don't start in fullscreen
+///   * `true` - Start in native fullscreen (default)
 ///   * `non-native` - (macOS only) Start in non-native fullscreen, hiding the
 ///     menu bar. This is faster than native fullscreen since it doesn't use
 ///     animations. On non-macOS platforms, this behaves the same as `true`.
@@ -1541,7 +1536,7 @@ maximize: bool = false,
 /// On macOS, `true` (native fullscreen) does not work if `window-decoration`
 /// is set to `false`, because native fullscreen on macOS requires window
 /// decorations.
-fullscreen: Fullscreen = .false,
+fullscreen: Fullscreen = .true,
 
 /// The title Ghostty will use for the window. This will force the title of the
 /// window to be this title at all times and Ghostty will ignore any set title
@@ -2022,7 +2017,7 @@ keybind: Keybinds = .{},
 /// left padding to 2 and the right padding to 4. If you want to set both
 /// paddings to the same value, you can use a single value. For example,
 /// `window-padding-x = 2` will set both paddings to 2.
-@"window-padding-x": WindowPadding = .{ .top_left = 2, .bottom_right = 2 },
+@"window-padding-x": WindowPadding = .{ .top_left = 4, .bottom_right = 4 },
 
 /// Vertical window padding. This applies padding between the terminal cells and
 /// the top and bottom window borders. The value is in points, meaning that it
@@ -2041,7 +2036,7 @@ keybind: Keybinds = .{},
 /// top padding to 2 and the bottom padding to 4. If you want to set both
 /// paddings to the same value, you can use a single value. For example,
 /// `window-padding-y = 2` will set both paddings to 2.
-@"window-padding-y": WindowPadding = .{ .top_left = 2, .bottom_right = 2 },
+@"window-padding-y": WindowPadding = .{ .top_left = 4, .bottom_right = 4 },
 
 /// The viewport dimensions are usually not perfectly divisible by the cell
 /// size. In this case, some extra padding on the end of a column and the bottom
@@ -2064,7 +2059,7 @@ keybind: Keybinds = .{},
 ///   bottom.
 /// * `equal` - Balance the padding equally on all sides without any
 ///   top-padding cap. (Available since: 1.4.0)
-@"window-padding-balance": WindowPaddingBalance = .false,
+@"window-padding-balance": WindowPaddingBalance = .true,
 
 /// The color of the padding area of the window. Valid values are:
 ///
@@ -2313,10 +2308,10 @@ keybind: Keybinds = .{},
 /// running, the previous window state will not be restored because Ghostty only
 /// saves state on exit if this is enabled.
 ///
-/// The default value is `default`.
+/// The default value is `never`.
 ///
 /// This is currently only supported on macOS. This has no effect on Linux.
-@"window-save-state": WindowSaveState = .default,
+@"window-save-state": WindowSaveState = .never,
 
 /// Resize the window in discrete increments of the focused surface's cell size.
 /// If this is disabled, surfaces are resized in pixel increments. Currently
@@ -2405,8 +2400,8 @@ keybind: Keybinds = .{},
 ///                     is first created, but will show up if the surface is
 ///                     subsequently resized.
 ///
-/// The default is `after-first`.
-@"resize-overlay": ResizeOverlay = .@"after-first",
+/// The default is `never`.
+@"resize-overlay": ResizeOverlay = .never,
 
 /// If resize overlays are enabled, this controls the position of the overlay.
 /// The possible options are:
@@ -2533,12 +2528,12 @@ keybind: Keybinds = .{},
 
 /// The total amount of bytes that can be used for image data (e.g. the Kitty
 /// image protocol) per terminal screen. The maximum value is 4,294,967,295
-/// (4GiB). The default is 320MB. If this is set to zero, then all image
-/// protocols will be disabled.
+/// (4GiB). If this is set to zero, then all image
+/// protocols will be disabled. The default is 0 (disabled).
 ///
 /// This value is separate for primary and alternate screens so the effective
 /// limit per surface is double.
-@"image-storage-limit": u32 = 320 * 1000 * 1000,
+@"image-storage-limit": u32 = 0,
 
 /// Whether to automatically copy selected text to the clipboard.
 ///
@@ -2558,11 +2553,8 @@ keybind: Keybinds = .{},
 /// `primary` on Linux and `clipboard` on macOS, and `false` is an alias for
 /// `none`.
 ///
-/// The default value is `primary` on Linux and `none` otherwise.
-@"copy-on-select": CopyOnSelect = switch (builtin.target.os.tag) {
-    .linux => .primary,
-    else => .none,
-},
+/// The default value is `none`.
+@"copy-on-select": CopyOnSelect = .none,
 
 /// The action to take when the user right-clicks on the terminal surface.
 ///
@@ -2955,8 +2947,8 @@ keybind: Keybinds = .{},
 ///
 ///   * `bash`, `elvish`, `fish`, `nushell`, `zsh` - Use this specific shell injection scheme.
 ///
-/// The default value is `detect`.
-@"shell-integration": ShellIntegration = .detect,
+/// The default value is `none`.
+@"shell-integration": ShellIntegration = .none,
 
 /// Shell integration features to enable. These require our shell integration
 /// to be loaded, either automatically via shell-integration or manually.
@@ -3298,11 +3290,11 @@ keybind: Keybinds = .{},
 ///
 ///    On macOS, this plays the system alert sound.
 ///
-///  * `audio`
+///  * `audio` *(enabled by default)*
 ///
 ///    Play a custom sound. (Available since 1.3.0 on macOS)
 ///
-///  * `attention` *(enabled by default)*
+///  * `attention`
 ///
 ///    Request the user's attention when Ghostty is unfocused, until it has
 ///    received focus again. On macOS, this will bounce the app icon in the
@@ -3319,7 +3311,7 @@ keybind: Keybinds = .{},
 ///
 ///    - On other systems this may have no effect at all.
 ///
-///  * `title` *(enabled by default)*
+///  * `title`
 ///
 ///    Prepend a bell emoji (🔔) to the title of the alerted surface until the
 ///    terminal is re-focused or interacted with (such as on keyboard input).
@@ -3334,7 +3326,7 @@ keybind: Keybinds = .{},
 /// Example: `audio`, `no-audio`, `system`, `no-system`
 ///
 /// Available since: 1.2.0
-@"bell-features": BellFeatures = .{},
+@"bell-features": BellFeatures = .{ .audio = true, .attention = false, .title = false },
 
 /// If `audio` is an enabled bell feature, this is a path to an audio file. If
 /// the path is not absolute, it is considered relative to the directory of the
@@ -3342,15 +3334,21 @@ keybind: Keybinds = .{},
 /// directory if this is used as a CLI flag. The path may be prefixed with `~/`
 /// to reference the user's home directory.
 ///
+/// The default is `/System/Library/Sounds/Glass.aiff` on macOS and unset
+/// on other platforms.
+///
 /// Available since: 1.2.0 on GTK, 1.3.0 on macOS.
-@"bell-audio-path": ?Path = null,
+@"bell-audio-path": ?Path = switch (builtin.target.os.tag) {
+    .macos => .{ .required = "/System/Library/Sounds/Glass.aiff" },
+    else => null,
+},
 
 /// If `audio` is an enabled bell feature, this is the volume to play the audio
 /// file at (relative to the system volume). This is a floating point number
-/// ranging from 0.0 (silence) to 1.0 (as loud as possible). The default is 0.5.
+/// ranging from 0.0 (silence) to 1.0 (as loud as possible). The default is 1.0.
 ///
 /// Available since: 1.2.0 on GTK, 1.3.0 on macOS.
-@"bell-audio-volume": f64 = 0.5,
+@"bell-audio-volume": f64 = 1,
 
 /// Play a mechanical keyboard sound for physical key presses while Ghostty
 /// is the active application. The sound follows the application that is
@@ -3637,8 +3635,8 @@ keybind: Keybinds = .{},
 /// AppleScript commands and AppleScript object lookup for windows, tabs,
 /// and terminals.
 ///
-/// The default is true.
-@"macos-applescript": bool = true,
+/// The default is false.
+@"macos-applescript": bool = false,
 
 /// Customize the macOS app icon.
 ///
@@ -3736,7 +3734,7 @@ keybind: Keybinds = .{},
 /// * `deny` - Deny Shortcuts from controlling Ghostty.
 ///
 /// Available since: 1.2.0
-@"macos-shortcuts": MacShortcuts = .ask,
+@"macos-shortcuts": MacShortcuts = .deny,
 
 /// Put every surface (tab, split, window) into a transient `systemd` scope.
 ///
@@ -3940,14 +3938,15 @@ else
 /// Available since: 1.1.0
 @"gtk-custom-css": RepeatablePath = .{},
 
-/// If `true` (default), applications running in the terminal can show desktop
+/// If `true`, applications running in the terminal can show desktop
 /// notifications using certain escape sequences such as OSC 9 or OSC 777.
-@"desktop-notifications": bool = true,
+/// If `false` (default), these sequences are ignored.
+@"desktop-notifications": bool = false,
 
-/// If `true` (default), applications running in the terminal can show
+/// If `true`, applications running in the terminal can show
 /// graphical progress bars using the ConEmu OSC 9;4 escape sequence.
-/// If `false`, progress bar sequences are silently ignored.
-@"progress-style": bool = true,
+/// If `false` (default), progress bar sequences are silently ignored.
+@"progress-style": bool = false,
 
 /// Modifies the color used for bold text in the terminal.
 ///
@@ -4036,11 +4035,10 @@ term: []const u8 = "xterm-ghostty",
 ///  * `download` - Check for updates, automatically download the update,
 ///    notify the user, but do not automatically install the update.
 ///
-/// If unset, we defer to Sparkle's default behavior, which respects the
-/// preference stored in the standard user defaults (`defaults(1)`).
+/// The default is `off`, so updates are disabled.
 ///
 /// Changing this value at runtime works after a small delay.
-@"auto-update": ?AutoUpdate = null,
+@"auto-update": ?AutoUpdate = .off,
 
 /// The release channel to use for auto-updates.
 ///
@@ -8905,12 +8903,11 @@ pub const RepeatableLink = struct {
 
 /// Options for copy on select behavior.
 pub const CopyOnSelect = enum {
-    /// Disables copy on select entirely. This is the default on macOS.
+    /// Disables copy on select entirely. This is the default.
     none,
 
     /// Copy on select is enabled, but goes to the selection clipboard.
-    /// This is not supported on platforms such as macOS. This is the default
-    /// on Linux.
+    /// This is not supported on platforms such as macOS.
     primary,
 
     /// Copy on select is enabled and goes to the system clipboard.
@@ -10775,7 +10772,39 @@ test "personal defaults" {
     try testing.expectEqualStrings("Black Phosphor", theme.dark);
     if (comptime builtin.target.os.tag == .macos) {
         try testing.expectEqual(@as(f32, 16), cfg.@"font-size");
+        try testing.expectEqualStrings(
+            "/System/Library/Sounds/Glass.aiff",
+            cfg.@"bell-audio-path".?.required,
+        );
+    } else {
+        try testing.expect(cfg.@"bell-audio-path" == null);
     }
+    try testing.expect(cfg.fullscreen == .true);
+    try testing.expectEqual(@as(u32, 4), cfg.@"window-padding-x".top_left);
+    try testing.expectEqual(@as(u32, 4), cfg.@"window-padding-x".bottom_right);
+    try testing.expectEqual(@as(u32, 4), cfg.@"window-padding-y".top_left);
+    try testing.expectEqual(@as(u32, 4), cfg.@"window-padding-y".bottom_right);
+    try testing.expect(cfg.@"window-padding-balance" == .true);
+    try testing.expect(cfg.@"window-padding-color" == .background);
+    try testing.expect(cfg.@"shell-integration" == .none);
+    try testing.expectEqual(@as(?bool, false), cfg.@"cursor-style-blink");
+    try testing.expect(cfg.@"copy-on-select" == .none);
+    try testing.expect(cfg.scrollbar == .never);
+    try testing.expect(cfg.@"resize-overlay" == .never);
+    try testing.expect(cfg.@"link-previews" == .false);
+    try testing.expect(cfg.@"progress-style" == false);
+    try testing.expect(cfg.@"desktop-notifications" == false);
+    try testing.expectEqual(@as(u32, 0), cfg.@"image-storage-limit");
+    try testing.expect(cfg.@"window-save-state" == .never);
+    try testing.expect(cfg.@"macos-applescript" == false);
+    try testing.expect(cfg.@"macos-shortcuts" == .deny);
+    try testing.expect(cfg.@"auto-update" == .off);
+    try testing.expect(cfg.@"bell-features".audio == true);
+    try testing.expect(cfg.@"bell-features".system == false);
+    try testing.expect(cfg.@"bell-features".attention == false);
+    try testing.expect(cfg.@"bell-features".title == false);
+    try testing.expect(cfg.@"bell-features".border == false);
+    try testing.expectEqual(@as(f64, 1), cfg.@"bell-audio-volume");
     var cloned = try cfg.clone(alloc);
     defer cloned.deinit();
 }
