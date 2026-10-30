@@ -14,6 +14,7 @@ const math = @import("../math.zig");
 const Surface = @import("../Surface.zig");
 const link = @import("link.zig");
 const cellpkg = @import("cell.zig");
+const fg_transition = @import("fg_transition.zig");
 const noMinContrast = cellpkg.noMinContrast;
 const constraintWidth = cellpkg.constraintWidth;
 const isCovering = cellpkg.isCovering;
@@ -178,6 +179,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// to determine if any possible changes have been made to the
         /// cells for the draw call.
         cells_rebuilt: bool = false,
+
+        /// Foreground-color transition bookkeeping. Only populated when
+        /// the `foreground-color-transition` duration is nonzero.
+        fg_trans: fg_transition.State = .{ .alloc = undefined },
+
+        /// Monotonic clock base for transition timestamps. Set lazily
+        /// on first use so renderers that never animate never sample it.
+        fg_trans_base: ?std.Io.Timestamp = null,
 
         /// Set to true after the Kitty image placements are rebuilt. Like
         /// `cells_rebuilt`, this means the next frame must be drawn. This
@@ -623,6 +632,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             background_blur: configpkg.Config.BackgroundBlur,
             scroll_to_bottom_on_output: bool,
             custom_shader_animation: configpkg.CustomShaderAnimation,
+            foreground_color_transition_ms: u64,
 
             pub fn init(
                 alloc_gpa: Allocator,
@@ -698,6 +708,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .background_blur = config.@"background-blur",
                     .scroll_to_bottom_on_output = config.@"scroll-to-bottom".output,
                     .custom_shader_animation = config.@"custom-shader-animation",
+                    .foreground_color_transition_ms = @divTrunc(
+                        config.@"foreground-color-transition".duration,
+                        std.time.ns_per_ms,
+                    ),
                     .arena = arena,
                 };
             }
@@ -758,6 +772,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                 // Render state
                 .cells = .{},
+                .fg_trans = fg_transition.State.init(alloc),
                 .uniforms = .{
                     .projection_matrix = undefined,
                     .cell_size = undefined,
@@ -863,6 +878,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
 
             self.cells.deinit(self.alloc);
+            self.fg_trans.deinit();
 
             self.font_shaper.deinit();
             self.font_shaper_cache.deinit(self.alloc);
@@ -1126,24 +1142,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         };
 
         /// The soonest animation wake this renderer needs, if any:
-        /// custom shader animation wants continuous draw-only wakes
-        /// at draw_interval_ms while active, and a running Kitty
-        /// graphics animation wants an update wake when its next
-        /// frame is due. The renderer thread drives its animation
-        /// timer off this, re-querying after every wake.
+        /// custom shader animation and foreground-color transitions want
+        /// continuous draw-only wakes at draw_interval_ms while active,
+        /// and a running Kitty graphics animation wants an update wake
+        /// when its next frame is due. The renderer thread drives its
+        /// animation timer off this, re-querying after every wake.
         ///
         /// Must be called on the render thread.
         pub fn animationWake(self: *const Self) ?AnimationWake {
-            // Custom shaders animate by redrawing on a fixed cadence,
-            // gated by configuration and focus.
-            const shader_delay: ?u64 = shader: {
-                if (!self.has_custom_shaders) break :shader null;
-                break :shader switch (self.config.custom_shader_animation) {
-                    .false => null,
-                    .always => draw_interval_ms,
-                    .true => if (self.focused) draw_interval_ms else null,
-                };
-            };
+            // Draw-only wakes: custom shader animation and
+            // foreground-color transitions share the draw cadence.
+            const draw_delay: ?u64 = self.drawWakeDelay();
 
             // Kitty animations tick during updateFrame; between
             // updates the deadline is absolute on the animation
@@ -1164,14 +1173,118 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // An update wake includes a draw, so it wins ties.
             if (kitty_delay) |k| {
-                if (shader_delay == null or k <= shader_delay.?) {
+                if (draw_delay == null or k <= draw_delay.?) {
                     return .{ .delay_ms = k, .kind = .update };
                 }
             }
 
-            if (shader_delay) |s| return .{ .delay_ms = s, .kind = .draw };
+            if (draw_delay) |s| return .{ .delay_ms = s, .kind = .draw };
 
             return null;
+        }
+
+        /// The soonest draw-only wake needed, if any: custom shader
+        /// animation and foreground-color transitions both animate by
+        /// redrawing at the draw cadence. Update wakes (Kitty) subsume
+        /// draws, so this is compared against them above.
+        fn drawWakeDelay(self: *const Self) ?u64 {
+            var delay: ?u64 = shader: {
+                if (!self.has_custom_shaders) break :shader null;
+                break :shader switch (self.config.custom_shader_animation) {
+                    .false => null,
+                    .always => draw_interval_ms,
+                    .true => if (self.focused) draw_interval_ms else null,
+                };
+            };
+
+            // Foreground-color transitions animate by redrawing only;
+            // no terminal state changes, so no update is required. Gated
+            // on focus like `.true` shader animation: unfocused windows
+            // settle on their next driven frame instead of animating.
+            if (self.config.foreground_color_transition_ms > 0 and
+                self.fg_trans.count() > 0 and
+                self.focused)
+            {
+                delay = if (delay) |d| @min(d, draw_interval_ms) else draw_interval_ms;
+            }
+
+            return delay;
+        }
+
+        /// Monotonic milliseconds since the transition clock base,
+        /// shared by all transition decisions in a frame.
+        fn fgTransitionNow(self: *Self) u64 {
+            const now: std.Io.Timestamp = .now(global.io(), .awake);
+            const base = self.fg_trans_base orelse {
+                self.fg_trans_base = now;
+                return 0;
+            };
+            const ns = base.durationTo(now).nanoseconds;
+            if (ns <= 0) return 0;
+            return @intCast(@divTrunc(ns, std.time.ns_per_ms));
+        }
+
+        /// Advance active foreground-color transitions, rewriting the
+        /// resolved color of matching cell instances in place. Rows are
+        /// scanned linearly and stop at the first column past the cell,
+        /// so entries only cost in proportion to their own rows. No heap
+        /// allocation happens here. Completed entries paint their exact
+        /// target and are dropped, which also stops the animation wakes.
+        fn tickFgTransitions(self: *Self) void {
+            const duration_ms = self.config.foreground_color_transition_ms;
+            if (duration_ms == 0) return;
+            if (self.fg_trans.count() == 0) return;
+            const now_ms = self.fgTransitionNow();
+
+            var done: [64]fg_transition.Key = undefined;
+            while (true) {
+                var done_n: usize = 0;
+                var it = self.fg_trans.entries.iterator();
+                while (it.next()) |kv| {
+                    const k = kv.key_ptr.*;
+                    const e = kv.value_ptr;
+                    const y: u16 = fg_transition.keyRow(k);
+                    const x: u16 = @intCast(k & 0xFFFF);
+                    if (e.isDone(now_ms, duration_ms)) {
+                        self.paintFgTransitionCell(y, x, e.last, e.to);
+                        if (done_n < done.len) {
+                            done[done_n] = k;
+                            done_n += 1;
+                        } else break;
+                    } else {
+                        const c = e.colorAt(now_ms, duration_ms);
+                        if (!c.eql(e.last)) {
+                            self.paintFgTransitionCell(y, x, e.last, c);
+                            e.last = c;
+                        }
+                    }
+                }
+                for (done[0..done_n]) |k| _ = self.fg_trans.entries.remove(k);
+                if (done_n < done.len) break;
+            }
+        }
+
+        /// Rewrite instances at (y, x) currently holding `expected` to
+        /// `color`, preserving alpha. Decorations with explicit colors
+        /// and cursor glyphs never match and are left alone.
+        fn paintFgTransitionCell(
+            self: *Self,
+            y: u16,
+            x: u16,
+            expected: fg_transition.RGB,
+            color: fg_transition.RGB,
+        ) void {
+            if (y >= self.cells.size.rows or x >= self.cells.size.columns) return;
+            const row = &self.cells.fg_rows[@as(usize, y) + 1];
+            for (row.items) |*c| {
+                if (c.grid_pos[0] > x) break;
+                if (c.grid_pos[0] != x) continue;
+                if (c.bools.is_cursor_glyph) continue;
+                if (c.color[0] != expected.r or
+                    c.color[1] != expected.g or
+                    c.color[2] != expected.b) continue;
+                c.color = .{ color.r, color.g, color.b, c.color[3] };
+            }
         }
 
         /// Returns true if the display link is running, meaning frames
@@ -1874,6 +1987,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Update per-frame custom shader uniforms.
             try self.updateCustomShaderUniformsForFrame();
 
+            // Advance active foreground-color transitions by rewriting
+            // the resolved color of existing instances. This reshapes
+            // nothing and touches no shaders; rows whose colors settle
+            // stop being visited once their entries complete.
+            self.tickFgTransitions();
+
             // Setup our frame data
             try frame.uniforms.sync(&.{self.uniforms});
             try frame.cells_bg.sync(self.cells.bg_cells);
@@ -2215,9 +2334,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             const old_blending = self.config.blending;
             const custom_shaders_changed = !self.config.custom_shaders.equal(config.custom_shaders);
+            const fg_transition_changed = self.config.foreground_color_transition_ms !=
+                config.foreground_color_transition_ms;
 
             self.config.deinit();
             self.config = config.*;
+
+            // A changed transition duration drops all transition state;
+            // the forced rebuild below repaints exact target colors.
+            if (fg_transition_changed) self.fg_trans.invalidateAll();
 
             // If our background image path changed, prepare the new bg image.
             if (bg_image_changed) try self.prepBackgroundImage();
@@ -2676,6 +2801,27 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // working terminal state, even if incorrect.
             errdefer comptime unreachable;
 
+            // Foreground-color transitions: size our tracking to the
+            // grid. A full rebuild or resize drops all transition
+            // state so stale colors never leak across lines. An
+            // allocation failure degrades to no transitions rather
+            // than failing the frame.
+            var fg_duration_ms = self.config.foreground_color_transition_ms;
+            if (fg_duration_ms > 0) {
+                self.fg_trans.ensureSize(
+                    self.cells.size.rows,
+                    self.cells.size.columns,
+                ) catch |err| {
+                    log.warn(
+                        "error allocating foreground transition state err={}",
+                        .{err},
+                    );
+                    self.fg_trans.invalidateAll();
+                    fg_duration_ms = 0;
+                };
+                if (rebuild) self.fg_trans.invalidateAll();
+            }
+
             // Get our row data from our state
             const row_data = state.row_data.slice();
             const row_raws = row_data.items(.raw);
@@ -2683,6 +2829,22 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const row_dirty = row_data.items(.dirty);
             const row_selection = row_data.items(.selection);
             const row_highlights = row_data.items(.highlights);
+
+            // Sync transition bookkeeping against terminal row identity
+            // so scrolling and alt-screen switches invalidate state.
+            if (fg_duration_ms > 0) {
+                self.fg_trans.syncRows(
+                    row_data.items(.serial),
+                    row_data.items(.pin),
+                );
+            }
+
+            // Monotonic timestamp shared by all transition decisions
+            // in this frame so rapid redraws cannot restart them.
+            const fg_now_ms: u64 = if (fg_duration_ms > 0)
+                self.fgTransitionNow()
+            else
+                0;
 
             // If our cell contents buffer is shorter than the screen viewport,
             // we render the rows that fit, starting from the bottom. If instead
@@ -2747,6 +2909,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     selection,
                     highlights,
                     links,
+                    fg_now_ms,
                 ) catch |err| {
                     // This should never happen except under exceptional
                     // scenarios. In this case, we don't want to corrupt
@@ -2931,6 +3094,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             selection: ?[2]terminal.size.CellCountInt,
             highlights: *const std.ArrayList(terminal.RenderState.Highlight),
             links: *const terminal.RenderState.CellSet,
+            now_ms: u64,
         ) !void {
             const state = &self.terminal_state;
 
@@ -3003,7 +3167,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     // We're before the preedit range, no actions necessary.
                     if (x < range.x[0]) break :preedit;
                     // We're in the preedit range, skip this cell.
-                    if (x <= range.x[1]) continue;
+                    if (x <= range.x[1]) {
+                        self.fg_trans.markOverride(
+                            @intCast(y),
+                            @intCast(x),
+                        );
+                        continue;
+                    }
                     // After exiting the preedit range we need to catch
                     // the run position up because of the missed cells.
                     // In all other cases, no action is necessary.
@@ -3192,6 +3362,33 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // Foreground alpha for this cell.
                 const alpha: u8 = if (style.flags.faint) self.config.faint_opacity else 255;
 
+                // Foreground-color transition: resolve the color to
+                // paint. Backgrounds always apply immediately; plain
+                // foreground changes fade from the previously
+                // displayed color instead of snapping.
+                const fg_duration_ms = self.config.foreground_color_transition_ms;
+                var paint_fg: terminal.color.RGB = fg;
+                if (fg_duration_ms > 0) paint_fg = paint_fg: {
+                    const plain = selected == .false and
+                        !style.flags.inverse and
+                        !style.flags.invisible;
+                    const id: fg_transition.Identity = .{
+                        .cp = cell.codepoint(),
+                        .bold = style.flags.bold,
+                        .italic = style.flags.italic,
+                        .wide = @backingInt(wide),
+                    };
+                    break :paint_fg self.fg_trans.stepCell(
+                        y,
+                        @intCast(x),
+                        fg,
+                        id,
+                        plain,
+                        now_ms,
+                        fg_duration_ms,
+                    ) catch fg;
+                };
+
                 // Set the cell's background color.
                 {
                     const rgb = bg orelse state.colors.background;
@@ -3265,7 +3462,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     @intCast(x),
                     @intCast(y),
                     underline,
-                    style.underlineColor(&state.colors.palette) orelse fg,
+                    style.underlineColor(&state.colors.palette) orelse paint_fg,
                     alpha,
                 ) catch |err| {
                     log.warn(
@@ -3274,7 +3471,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     );
                 };
 
-                if (style.flags.overline) self.addOverline(@intCast(x), @intCast(y), fg, alpha) catch |err| {
+                if (style.flags.overline) self.addOverline(@intCast(x), @intCast(y), paint_fg, alpha) catch |err| {
                     log.warn(
                         "error adding overline to cell, will be invalid x={} y={}, err={}",
                         .{ x, y, err },
@@ -3344,7 +3541,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             cells_raw,
                             shaped_cells[shaper_cells_i],
                             shaper_run.?,
-                            fg,
+                            paint_fg,
                             alpha,
                         ) catch |err| {
                             log.warn(
@@ -3359,7 +3556,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 if (style.flags.strikethrough) self.addStrikethrough(
                     @intCast(x),
                     @intCast(y),
-                    fg,
+                    paint_fg,
                     alpha,
                 ) catch |err| {
                     log.warn(

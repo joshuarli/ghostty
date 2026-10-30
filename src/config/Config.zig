@@ -783,6 +783,23 @@ foreground: Color = .{ .r = 0xFF, .g = 0xFF, .b = 0xFF },
 /// This value does not apply to Emoji or images.
 @"minimum-contrast": f64 = 1,
 
+/// Smoothly fade glyph foreground colors when a terminal application
+/// redraws an existing character with a different foreground color,
+/// instead of snapping immediately. Glyph shapes and positions never
+/// move; only the foreground color is interpolated with an ease-out
+/// curve over this duration. Background colors always apply
+/// immediately.
+///
+/// This works with ordinary ANSI SGR color changes (16-color, 256-color,
+/// and 24-bit truecolor) and needs no application support.
+///
+/// The default of `0` disables the effect and preserves upstream
+/// behavior. A typical value is `200ms`. Values larger than 2 seconds
+/// are clamped to 2 seconds.
+///
+/// Available since: 1.5.0
+@"foreground-color-transition": Duration = .{ .duration = 0 },
+
 /// Color palette for the 256 color form that many terminal applications use.
 /// The syntax of this configuration is `N=COLOR` where `N` is 0 to 255 (for
 /// the 256 colors in the terminal color table) and `COLOR` is a typical RGB
@@ -4921,6 +4938,15 @@ pub fn finalize(self: *Config) !void {
 
     // Clamp our contrast
     self.@"minimum-contrast" = @min(21, @max(1, self.@"minimum-contrast"));
+
+    // Clamp the foreground-color transition to a sane maximum.
+    // Zero disables the effect and must stay zero.
+    if (self.@"foreground-color-transition".duration > 0) {
+        self.@"foreground-color-transition".duration = @min(
+            2000 * std.time.ns_per_ms,
+            self.@"foreground-color-transition".duration,
+        );
+    }
 
     // Minimum window size
     if (self.@"window-width" > 0) self.@"window-width" = @max(10, self.@"window-width");
@@ -10636,6 +10662,51 @@ test "parse duration" {
     try std.testing.expectError(error.InvalidValue, Duration.parseCLI("s"));
     try std.testing.expectError(error.InvalidValue, Duration.parseCLI("1x"));
     try std.testing.expectError(error.InvalidValue, Duration.parseCLI("1 "));
+}
+
+test "foreground-color-transition defaults disabled, parses, clamps" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // Default is zero (disabled), preserving upstream behavior.
+    {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        try testing.expectEqual(
+            @as(u64, 0),
+            cfg.@"foreground-color-transition".duration,
+        );
+    }
+
+    // Millisecond durations parse through the normal config path.
+    {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        var it: TestIterator = .{ .data = &.{
+            "--foreground-color-transition=200ms",
+        } };
+        try cfg.loadIter(alloc, &it);
+        try cfg.finalize();
+        try testing.expectEqual(
+            200 * std.time.ns_per_ms,
+            cfg.@"foreground-color-transition".duration,
+        );
+    }
+
+    // Unreasonable values clamp to the 2s maximum.
+    {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        var it: TestIterator = .{ .data = &.{
+            "--foreground-color-transition=30s",
+        } };
+        try cfg.loadIter(alloc, &it);
+        try cfg.finalize();
+        try testing.expectEqual(
+            2000 * std.time.ns_per_ms,
+            cfg.@"foreground-color-transition".duration,
+        );
+    }
 }
 
 test "test format" {
