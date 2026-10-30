@@ -9419,7 +9419,7 @@ pub const GtkTitlebarStyle = enum(c_int) {
             .{ .name = "GhosttyGtkTitlebarStyle" },
         ),
 
-        .none => void,
+        .none, .wayland => void,
     };
 };
 
@@ -10141,7 +10141,7 @@ pub const WindowDecoration = enum(c_int) {
             .{ .name = "GhosttyConfigWindowDecoration" },
         ),
 
-        .none => void,
+        .none, .wayland => void,
     };
 
     pub fn parseCLI(input_: ?[]const u8) !WindowDecoration {

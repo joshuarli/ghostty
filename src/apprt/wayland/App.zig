@@ -6,6 +6,7 @@ const configpkg = @import("../../config.zig");
 const Config = configpkg.Config;
 const input = @import("../../input.zig");
 const Surface = @import("Surface.zig");
+const Connection = @import("connection.zig").Connection;
 
 const log = std.log.scoped(.wayland);
 
@@ -13,6 +14,7 @@ pub const App = @This();
 
 core_app: *CoreApp,
 config: Config,
+conn: ?*Connection,
 running: bool,
 surface: ?*Surface,
 
@@ -23,6 +25,7 @@ pub fn init(self: *App, core_app: *CoreApp, opts: struct {}) !void {
     self.* = .{
         .core_app = core_app,
         .config = config,
+        .conn = null,
         .running = false,
         .surface = null,
     };
@@ -33,6 +36,11 @@ pub fn terminate(self: *App) void {
         s.deinit();
         self.core_app.alloc.destroy(s);
         self.surface = null;
+    }
+    if (self.conn) |c| {
+        c.disconnect();
+        self.core_app.alloc.destroy(c);
+        self.conn = null;
     }
     self.config.deinit();
 }
@@ -51,11 +59,36 @@ pub fn wait(self: *const App) !void {
 }
 
 pub fn run(self: *App) !void {
+    const alloc = self.core_app.alloc;
+    const conn = try alloc.create(Connection);
+    errdefer alloc.destroy(conn);
+    conn.* = try Connection.connect(alloc);
+    var conn_connected = true;
+    errdefer if (conn_connected) {
+        conn.disconnect();
+    };
+    self.conn = conn;
+
     self.running = true;
-    try self.newWindow();
+    self.newWindow() catch |err| {
+        self.conn = null;
+        conn_connected = false;
+        conn.disconnect();
+        return err;
+    };
     while (self.running) {
+        conn.dispatchPending();
         try self.core_app.tick(self);
-        if (self.surface == null) break;
+        if (self.surface) |s| {
+            s.present();
+            if (s.window) |w| {
+                if (w.closed) {
+                    self.running = false;
+                    break;
+                }
+            }
+        } else break;
+        conn.flush();
         std.Thread.yield() catch {};
     }
 }
@@ -64,7 +97,10 @@ fn newWindow(self: *App) !void {
     const alloc = self.core_app.alloc;
     const rt_surface = try alloc.create(Surface);
     errdefer alloc.destroy(rt_surface);
-    try rt_surface.init(self);
+    rt_surface.init(self) catch |err| {
+        if (rt_surface.window) |w| w.destroy();
+        return err;
+    };
     errdefer rt_surface.deinit();
     self.surface = rt_surface;
 }
