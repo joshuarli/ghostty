@@ -3350,6 +3350,36 @@ keybind: Keybinds = .{},
 /// Available since: 1.2.0 on GTK, 1.3.0 on macOS.
 @"bell-audio-volume": f64 = 0.5,
 
+/// Play a mechanical keyboard sound for physical key presses while Ghostty
+/// is the active application. The sound follows the application that is
+/// running, including shortcuts and native UI, and stops when Ghostty is
+/// not active. This only plays on macOS. Other platforms accept the value
+/// and do not start audio.
+///
+/// Valid values:
+///
+///   * `off` (default)
+///   * `buckling-spring`
+@"keyboard-sound": KeyboardSound = .off,
+
+/// Loudness of `keyboard-sound`, from 0.0 (silent) to 1.0 (full). The default
+/// is 0.20. Perceived loudness follows a squared gain curve. Values outside
+/// 0.0...1.0, and non-finite values, are rejected. This only has an effect
+/// on macOS.
+@"keyboard-sound-volume": KeyboardSoundVolume = .{},
+
+/// Play a sample when a physical key is released. The default is true. This
+/// only has an effect on macOS.
+@"keyboard-sound-release": bool = true,
+
+/// Apply a small random gain and pitch change to each sample. The default is
+/// true. This only has an effect on macOS.
+@"keyboard-sound-variation": bool = true,
+
+/// Place each key in the stereo field according to its physical position on
+/// the keyboard. The default is true. This only has an effect on macOS.
+@"keyboard-sound-spatial": bool = true,
+
 /// Control the in-app notifications that Ghostty shows.
 ///
 /// On Linux (GTK), in-app notifications show up as toasts. Toasts appear
@@ -10464,6 +10494,30 @@ pub const Duration = struct {
     }
 };
 
+pub const KeyboardSound = enum {
+    off,
+    @"buckling-spring",
+};
+
+pub const KeyboardSoundVolume = struct {
+    value: f64 = 0.20,
+
+    pub fn parseCLI(input_: ?[]const u8) !KeyboardSoundVolume {
+        const input = input_ orelse return error.ValueRequired;
+        const value = std.fmt.parseFloat(f64, input) catch return error.InvalidValue;
+        if (!std.math.isFinite(value) or value < 0 or value > 1) return error.InvalidValue;
+        return .{ .value = value };
+    }
+
+    pub fn clone(self: KeyboardSoundVolume, _: Allocator) error{}!KeyboardSoundVolume {
+        return self;
+    }
+
+    pub fn formatEntry(self: KeyboardSoundVolume, formatter: formatterpkg.EntryFormatter) !void {
+        try formatter.formatEntry(f64, self.value);
+    }
+};
+
 pub const WindowPadding = struct {
     const Self = @This();
 
@@ -10706,6 +10760,66 @@ test "foreground-color-transition defaults disabled, parses, clamps" {
             2000 * std.time.ns_per_ms,
             cfg.@"foreground-color-transition".duration,
         );
+    }
+}
+
+test "keyboard-sound config" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        try testing.expectEqual(KeyboardSound.off, cfg.@"keyboard-sound");
+        try testing.expectEqual(@as(f64, 0.20), cfg.@"keyboard-sound-volume".value);
+        try testing.expect(cfg.@"keyboard-sound-release");
+        try testing.expect(cfg.@"keyboard-sound-variation");
+        try testing.expect(cfg.@"keyboard-sound-spatial");
+        try testing.expect(cfg._diagnostics.empty());
+    }
+
+    {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        var it: TestIterator = .{ .data = &.{
+            "--keyboard-sound=buckling-spring",
+            "--keyboard-sound-volume=0.20",
+            "--keyboard-sound-release=false",
+            "--keyboard-sound-variation=0",
+            "--keyboard-sound-spatial=false",
+        } };
+        try cfg.loadIter(alloc, &it);
+        try cfg.finalize();
+        try testing.expect(cfg._diagnostics.empty());
+        try testing.expectEqual(KeyboardSound.@"buckling-spring", cfg.@"keyboard-sound");
+        try testing.expectEqual(@as(f64, 0.20), cfg.@"keyboard-sound-volume".value);
+        try testing.expect(!cfg.@"keyboard-sound-release");
+        try testing.expect(!cfg.@"keyboard-sound-variation");
+        try testing.expect(!cfg.@"keyboard-sound-spatial");
+
+        var cloned = try cfg.clone(alloc);
+        defer cloned.deinit();
+        try testing.expectEqual(KeyboardSound.@"buckling-spring", cloned.@"keyboard-sound");
+        try testing.expectEqual(@as(f64, 0.20), cloned.@"keyboard-sound-volume".value);
+        try testing.expect(!cloned.@"keyboard-sound-release");
+    }
+
+    const rejected = [_][]const u8{
+        "--keyboard-sound=clicky",
+        "--keyboard-sound-volume=2",
+        "--keyboard-sound-volume=nan",
+        "--keyboard-sound-volume=inf",
+        "--keyboard-sound-volume=-0.1",
+    };
+    for (rejected) |arg| {
+        var cfg = try Config.default(alloc);
+        defer cfg.deinit();
+        var it: TestIterator = .{ .data = &.{arg} };
+        try cfg.loadIter(alloc, &it);
+        try cfg.finalize();
+        try testing.expectEqual(KeyboardSound.off, cfg.@"keyboard-sound");
+        try testing.expectEqual(@as(f64, 0.20), cfg.@"keyboard-sound-volume".value);
+        try testing.expectEqual(@as(usize, 1), cfg._diagnostics.items().len);
     }
 }
 

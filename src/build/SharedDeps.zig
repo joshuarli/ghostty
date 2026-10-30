@@ -579,6 +579,12 @@ pub fn add(
             step.root_module.linkFramework("OpenGL", .{});
         }
 
+        if (step.rootModuleTarget().os.tag == .macos) {
+            step.root_module.linkFramework("AudioToolbox", .{});
+            step.root_module.linkFramework("AudioUnit", .{});
+            step.root_module.linkFramework("CoreAudio", .{});
+        }
+
         // Apple platforms do not include libc libintl so we bundle it.
         // This is LGPL but since our source code is open source we are
         // in compliance with the LGPL since end users can modify this

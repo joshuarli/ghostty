@@ -241,7 +241,7 @@ class AppDelegate: NSObject,
         // Setup a local event monitor for app-level keyboard shortcuts. See
         // localEventHandler for more info why.
         _ = NSEvent.addLocalMonitorForEvents(
-            matching: [.keyDown],
+            matching: [.keyDown, .keyUp, .flagsChanged],
             handler: localEventHandler)
 
         // Notifications
@@ -611,13 +611,36 @@ class AppDelegate: NSObject,
     /// This handles events from the NSEvent.addLocalEventMonitor. We use this so we can get
     /// events without any terminal windows open.
     private func localEventHandler(_ event: NSEvent) -> NSEvent? {
+        noteSoundKey(event)
         return switch event.type {
         case .keyDown:
             localEventKeyDown(event)
 
+        case .keyUp, .flagsChanged:
+            event
+
         default:
             event
         }
+    }
+
+    /// Physical key transitions for keyboard sound. This runs before any
+    /// handler that consumes the event, and it does not look at typed text.
+    private func noteSoundKey(_ event: NSEvent) {
+        guard let app = ghostty.app else { return }
+        let action: ghostty_sound_key_action_e
+        switch event.type {
+        case .keyDown:
+            action = GHOSTTY_SOUND_KEY_DOWN
+        case .keyUp:
+            action = GHOSTTY_SOUND_KEY_UP
+        case .flagsChanged:
+            action = GHOSTTY_SOUND_KEY_FLAGS_CHANGED
+        default:
+            return
+        }
+        let flags = event.cgEvent?.flags.rawValue ?? UInt64(event.modifierFlags.rawValue)
+        ghostty_app_sound_key(app, event.keyCode, action, event.isARepeat, flags)
     }
 
     private func localEventKeyDown(_ event: NSEvent) -> NSEvent? {

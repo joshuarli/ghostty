@@ -1165,6 +1165,22 @@ GHOSTTY_API void ghostty_app_free(ghostty_app_t);
 GHOSTTY_API void ghostty_app_tick(ghostty_app_t);
 GHOSTTY_API void* ghostty_app_userdata(ghostty_app_t);
 GHOSTTY_API void ghostty_app_set_focus(ghostty_app_t, bool);
+
+typedef enum {
+  GHOSTTY_SOUND_KEY_DOWN = 1,
+  GHOSTTY_SOUND_KEY_UP = 2,
+  GHOSTTY_SOUND_KEY_FLAGS_CHANGED = 3,
+} ghostty_sound_key_action_e;
+
+// Physical key transition for keyboard sound. keycode is the macOS virtual
+// keycode. The call does not carry typed text. It is a no-op when keyboard
+// sound is off and on non-macOS builds.
+GHOSTTY_API void ghostty_app_sound_key(ghostty_app_t,
+                                        uint16_t keycode,
+                                        ghostty_sound_key_action_e action,
+                                        bool autorepeat,
+                                        uint64_t flags);
+
 GHOSTTY_API bool ghostty_app_key(ghostty_app_t, ghostty_input_key_s);
 GHOSTTY_API void ghostty_app_keyboard_changed(ghostty_app_t);
 GHOSTTY_API void ghostty_app_open_config(ghostty_app_t);

@@ -38,6 +38,7 @@ Makefile text eol=lf
 *.icns binary
 *.ttf binary
 *.otf binary
+*.rvpack binary
 
 #--------------------------------------------------------------------
 # Linguist
