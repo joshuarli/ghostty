@@ -16,6 +16,7 @@ const input = @import("../input.zig");
 const internal_os = @import("../os/main.zig");
 const renderer = @import("../renderer.zig");
 const terminal = @import("../terminal/main.zig");
+const sound = @import("../sound.zig");
 const CoreApp = @import("../App.zig");
 const CoreInspector = @import("../inspector/main.zig").Inspector;
 const CoreSurface = @import("../Surface.zig");
@@ -149,6 +150,9 @@ pub const App = struct {
     /// The configuration for the app. This is owned by this structure.
     config: Config,
 
+    /// Keyboard sound owned by this app. Null when the feature is off.
+    sound: ?*sound.Sound = null,
+
     pub fn init(
         self: *App,
         core_app: *CoreApp,
@@ -165,12 +169,46 @@ pub const App = struct {
             .config = config_clone,
             .opts = opts,
             .keymap = null,
+            .sound = null,
         };
+        self.syncSound();
     }
 
     pub fn terminate(self: *App) void {
+        self.stopSound();
         if (self.keymap) |*v| v.deinit();
         self.config.deinit();
+    }
+
+    fn stopSound(self: *App) void {
+        if (comptime builtin.os.tag != .macos) return;
+        const keyboard = self.sound orelse return;
+        self.sound = null;
+        keyboard.deinit();
+    }
+
+    fn syncSound(self: *App) void {
+        if (comptime builtin.os.tag != .macos) return;
+        if (self.config.@"keyboard-sound" == .off) {
+            self.stopSound();
+            return;
+        }
+        const settings: sound.Settings = .{
+            .volume = @floatCast(self.config.@"keyboard-sound-volume".value),
+            .release = self.config.@"keyboard-sound-release",
+            .variation = self.config.@"keyboard-sound-variation",
+            .spatial = self.config.@"keyboard-sound-spatial",
+            .focused = self.core_app.focused,
+            .enabled = true,
+        };
+        if (self.sound) |keyboard| {
+            keyboard.apply(settings);
+            return;
+        }
+        self.sound = sound.Sound.create(self.core_app.alloc, settings) catch |err| blk: {
+            log.warn("keyboard sound unavailable: {}", .{err});
+            break :blk null;
+        };
     }
 
     /// Returns true if there are any global keybinds in the configuration.
@@ -196,6 +234,8 @@ pub const App = struct {
     /// See CoreApp.focusEvent
     pub fn focusEvent(self: *App, focused: bool) void {
         self.core_app.focusEvent(focused);
+        if (comptime builtin.os.tag != .macos) return;
+        if (self.sound) |keyboard| keyboard.setFocused(focused);
     }
 
     /// See CoreApp.keyEvent.
@@ -349,6 +389,7 @@ pub const App = struct {
                 .app => if (value.config.clone(self.core_app.alloc)) |config| {
                     self.config.deinit();
                     self.config = config;
+                    self.syncSound();
                 } else |err| {
                     log.err("error updating app config err={}", .{err});
                 },
@@ -1753,6 +1794,20 @@ pub const CAPI = struct {
         focused: bool,
     ) void {
         app.focusEvent(focused);
+    }
+
+    /// One physical key transition from the app-local macOS event monitor.
+    /// `keycode` is the macOS virtual keycode. This does not carry typed text.
+    export fn ghostty_app_sound_key(
+        app: *App,
+        keycode: u16,
+        action: sound.Action,
+        autorepeat: bool,
+        flags: u64,
+    ) void {
+        if (comptime builtin.os.tag != .macos) return;
+        const keyboard = app.sound orelse return;
+        keyboard.key(keycode, action, autorepeat, flags);
     }
 
     /// Notify the app of a global keypress capture. This will return

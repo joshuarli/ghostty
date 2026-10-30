@@ -232,6 +232,7 @@ pub const std_options: std.Options = .{
 };
 
 test {
+    _ = @import("sound.zig");
     _ = @import("pty.zig");
     _ = @import("Command.zig");
     _ = @import("font/main.zig");
