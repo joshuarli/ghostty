@@ -99,7 +99,7 @@ jobs:
       - name: Build Laputa Wayland binary
         run: |
           zig build -Dapp-runtime=wayland -Doptimize=ReleaseFast -Dstrip=true \
-            -Demit-themes=false -Di18n=false
+            -Demit-themes=false -Di18n=false -Dcpu=baseline
 
       - name: Verify musl static-ish binary
         run: |
@@ -148,7 +148,7 @@ jobs:
               export PATH=/opt/zig-aarch64-linux-0.17.0:$PATH
               zig version
               zig build -Dapp-runtime=wayland -Doptimize=ReleaseFast -Dstrip=true \
-                -Demit-themes=false -Di18n=false > /tmp/build.log 2>&1
+                -Demit-themes=false -Di18n=false -Dcpu=baseline > /tmp/build.log 2>&1
               tail -50 /tmp/build.log
               file zig-out/bin/ghostty | tee file.txt
               grep -q "ELF 64-bit LSB.*aarch64" file.txt
@@ -156,6 +156,9 @@ jobs:
               readelf -d zig-out/bin/ghostty | tee dyn.txt
               test "$(grep -c NEEDED dyn.txt)" -le 5
               ! grep NEEDED dyn.txt | grep -Ei "gtk|adwaita|glib|X11|libGL\.|libc\.so\.6"
+              # Baseline CPU only: a native-CPU build (e.g. SVE2 on Neoverse
+              # N2 runners) dies with SIGILL on CPUs without those features.
+              ! readelf -A zig-out/bin/ghostty | grep -qi sve
               ./zig-out/bin/ghostty --version | grep -q "wayland"
               ./zig-out/bin/ghostty +show-config > /dev/null
               tar czf "$LINUX_ARTIFACT_ARM64" -C zig-out/bin ghostty
