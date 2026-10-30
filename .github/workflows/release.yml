@@ -84,7 +84,7 @@ jobs:
       - name: Install toolchain and dependencies
         shell: sh
         run: |
-          apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig \
+          apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig tar zstd \
             wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
@@ -146,20 +146,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: release-${{ github.sha }}
         run: |
-          gh release create "$RELEASE_TAG" dist/"$ARTIFACT" dist/"$LINUX_ARTIFACT" dist/SHA256SUMS dist/COMMIT \
-            --repo "$GITHUB_REPOSITORY" \
-            --prerelease \
-            --target "$GITHUB_SHA" \
-            --title "$RELEASE_TAG" \
-            --notes "Ad-hoc signed macOS arm64 build and musl x86_64 Laputa Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux tarball holds a mostly-static musl binary (dynamic libEGL, libwayland-client, libxkbcommon only); run it under any Wayland compositor."
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/"$ARTIFACT" dist/"$LINUX_ARTIFACT" dist/SHA256SUMS dist/COMMIT \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" dist/"$ARTIFACT" dist/"$LINUX_ARTIFACT" dist/SHA256SUMS dist/COMMIT \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" \
+              --notes "Ad-hoc signed macOS arm64 build and musl x86_64 Laputa Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux tarball holds a mostly-static musl binary (dynamic libEGL, libwayland-client, libxkbcommon only); run it under any Wayland compositor."
+          fi
 
       - name: Publish versioned release
         if: ${{ inputs.release_tag != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ inputs.release_tag }}" dist/"$ARTIFACT" dist/"$LINUX_ARTIFACT" dist/SHA256SUMS dist/COMMIT \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "${{ inputs.release_tag }}" \
-            --notes "Ad-hoc signed macOS arm64 build and musl x86_64 Laputa Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux tarball holds a mostly-static musl binary (dynamic libEGL, libwayland-client, libxkbcommon only); run it under any Wayland compositor."
+          if gh release view "${{ inputs.release_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "${{ inputs.release_tag }}" dist/"$ARTIFACT" dist/"$LINUX_ARTIFACT" dist/SHA256SUMS dist/COMMIT \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "${{ inputs.release_tag }}" dist/"$ARTIFACT" dist/"$LINUX_ARTIFACT" dist/SHA256SUMS dist/COMMIT \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "${{ inputs.release_tag }}" \
+              --notes "Ad-hoc signed macOS arm64 build and musl x86_64 Laputa Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux tarball holds a mostly-static musl binary (dynamic libEGL, libwayland-client, libxkbcommon only); run it under any Wayland compositor."
+          fi
