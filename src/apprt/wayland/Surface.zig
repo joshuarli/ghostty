@@ -4,6 +4,7 @@ const CoreSurface = @import("../../Surface.zig");
 const ApprtApp = @import("App.zig");
 const renderer = @import("../../renderer.zig");
 const global = @import("../../global.zig");
+const input = @import("../../input.zig");
 const Window = @import("window.zig").Window;
 
 const log = std.log.scoped(.wayland);
@@ -17,6 +18,7 @@ title: ?[:0]const u8,
 size: apprt.SurfaceSize,
 content_scale: apprt.ContentScale,
 cursor_pos: apprt.CursorPos,
+clipboard_text: ?[]u8,
 
 pub fn init(self: *Surface, app: *ApprtApp) !void {
     self.* = .{
@@ -27,6 +29,7 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
         .size = .{ .width = 800, .height = 600 },
         .content_scale = .{ .x = 1, .y = 1 },
         .cursor_pos = .{ .x = -1, .y = -1 },
+        .clipboard_text = null,
     };
     try app.core_app.addSurface(self);
     errdefer app.core_app.deleteSurface(self);
@@ -66,6 +69,8 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
 pub fn deinit(self: *Surface) void {
     if (self.title) |v| self.app.core_app.alloc.free(v);
     self.title = null;
+    if (self.clipboard_text) |v| self.app.core_app.alloc.free(v);
+    self.clipboard_text = null;
     if (self.window) |win| {
         win.destroy();
         self.window = null;
@@ -124,10 +129,41 @@ pub fn clipboardRequest(
     clipboard_type: apprt.Clipboard,
     state: apprt.ClipboardRequest,
 ) !apprt.ClipboardReadResult {
-    _ = self;
     _ = clipboard_type;
-    _ = state;
-    return .unsupported;
+    switch (state) {
+        .paste => {
+            const text = self.clipboard_text orelse return .unavailable;
+            const contents = [_]@import("../../terminal/main.zig").clipboard.Content{
+                .{ .mime = "text/plain", .data = text },
+            };
+            self.core_surface.completeClipboardRequest(state, .{
+                .contents = &contents,
+                .available = &.{ "text/plain" },
+                .confirmed = true,
+                .remember = false,
+            }) catch |err| {
+                log.warn("complete paste failed err={}", .{err});
+                return .unavailable;
+            };
+            return .started;
+        },
+        .osc_52_read => {
+            const text = self.clipboard_text orelse return .unavailable;
+            const contents = [_]@import("../../terminal/main.zig").clipboard.Content{
+                .{ .mime = "text/plain", .data = text },
+            };
+            self.core_surface.completeClipboardRequest(state, .{
+                .contents = &contents,
+                .available = &.{ "text/plain" },
+                .confirmed = true,
+                .remember = false,
+            }) catch return .unavailable;
+            return .started;
+        },
+        .list => return .unsupported,
+        .kitty_read, .kitty_write => return .unsupported,
+        .osc_52_write => return .unsupported,
+    }
 }
 
 pub fn setClipboard(
@@ -136,10 +172,68 @@ pub fn setClipboard(
     contents: []const apprt.ClipboardContent,
     confirm: bool,
 ) !void {
-    _ = self;
     _ = clipboard_type;
-    _ = contents;
     _ = confirm;
+    const alloc = self.app.core_app.alloc;
+    if (self.clipboard_text) |v| alloc.free(v);
+    self.clipboard_text = null;
+    for (contents) |c| {
+        if (std.mem.eql(u8, c.mime, "text/plain")) {
+            self.clipboard_text = try alloc.dupe(u8, c.data);
+            break;
+        }
+    }
+    if (self.clipboard_text == null and contents.len > 0) {
+        self.clipboard_text = try alloc.dupe(u8, contents[0].data);
+    }
+}
+
+pub fn handleKey(self: *Surface, event: input.KeyEvent) bool {
+    const effect = self.core_surface.keyCallback(event) catch |err| {
+        log.warn("key callback failed err={}", .{err});
+        return false;
+    };
+    return switch (effect) {
+        .closed => true,
+        .ignored => false,
+        .consumed => true,
+    };
+}
+
+pub fn handleMouseButton(
+    self: *Surface,
+    action: input.MouseButtonState,
+    button: input.MouseButton,
+    mods: input.Mods,
+) bool {
+    return self.core_surface.mouseButtonCallback(action, button, mods) catch |err| {
+        log.warn("mouse button failed err={}", .{err});
+        return false;
+    };
+}
+
+pub fn handleScroll(self: *Surface, xoff: f64, yoff: f64, mods: input.ScrollMods) void {
+    self.core_surface.scrollCallback(xoff, yoff, mods) catch |err| {
+        log.warn("scroll failed err={}", .{err});
+    };
+}
+
+pub fn handleCursor(self: *Surface, x: f64, y: f64, mods: input.Mods) void {
+    const scale = self.content_scale;
+    const pos: apprt.CursorPos = .{
+        .x = @floatCast(x * scale.x),
+        .y = @floatCast(y * scale.y),
+    };
+    self.cursor_pos = pos;
+    self.core_surface.cursorPosCallback(pos, mods) catch |err| {
+        log.warn("cursor failed err={}", .{err});
+    };
+}
+
+pub fn handleFocus(self: *Surface, focused: bool) void {
+    self.core_surface.focusCallback(focused) catch |err| {
+        log.warn("focus failed err={}", .{err});
+    };
 }
 
 pub fn defaultTermioEnv(self: *Surface) !std.process.Environ.Map {

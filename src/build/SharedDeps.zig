@@ -719,10 +719,19 @@ fn addWayland(
     const b = step.step.owner;
     const target = step.root_module.resolved_target.?;
     const optimize = step.root_module.optimize.?;
-    _ = optimize;
 
     step.root_module.linkSystemLibrary("wayland-client", dynamic_link_opts);
     step.root_module.linkSystemLibrary("xkbcommon", dynamic_link_opts);
+
+    try translate_c.addImportToModule(b, "xkbcommon", step.root_module, .{
+        .source = .{ .includes = .{ .files = &.{
+            .{ .path = "xkbcommon/xkbcommon.h" },
+            .{ .path = "xkbcommon/xkbcommon-compose.h" },
+        } } },
+        .target = target,
+        .optimize = optimize,
+        .link_system_libs = &.{"xkbcommon"},
+    });
 
     const wayland_dep_ = b.lazyDependency("wayland", .{});
     const wayland_protocols_dep_ = b.lazyDependency("wayland_protocols", .{});
@@ -752,6 +761,7 @@ fn addWayland(
     scanner.generate("wl_compositor", 4);
     scanner.generate("wl_seat", 9);
     scanner.generate("wl_shm", 1);
+    scanner.generate("wl_data_device_manager", 3);
     scanner.generate("xdg_wm_base", 6);
     scanner.generate("wp_fractional_scale_manager_v1", 1);
     scanner.generate("wp_viewporter", 1);
