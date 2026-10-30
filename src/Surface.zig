@@ -89,6 +89,12 @@ font_metrics: font.Metrics,
 /// a specific size.
 font_size_adjusted: bool,
 
+/// The last `font-size` value from the config that was applied to this
+/// surface. If a reload carries a different configured size, the user
+/// explicitly edited it: an explicit edit wins and clears any previous
+/// manual (keybind) adjustment.
+config_font_size: f32,
+
 /// The renderer for this surface.
 renderer: Renderer,
 
@@ -627,6 +633,7 @@ pub fn init(
         .font_grid_key = font_grid_key,
         .font_size = font_size,
         .font_size_adjusted = false,
+        .config_font_size = config.@"font-size",
         .font_metrics = font_grid.metrics,
         .renderer = renderer_impl,
         .renderer_thread = render_thread,
@@ -1852,6 +1859,17 @@ pub fn updateConfig(
     //
     // (Calling setFontSize builds and sends a new font grid to the renderer.)
     try self.setFontSize(font_size: {
+        // If the configured size changed since we last applied it, the
+        // user explicitly edited it: an explicit edit wins over any
+        // previous manual (keybind) adjustment.
+        if (config.@"font-size" != self.config_font_size) {
+            if (self.font_size_adjusted) {
+                log.info("font size changed in config, clearing manual adjustment", .{});
+                self.font_size_adjusted = false;
+            }
+            self.config_font_size = config.@"font-size";
+        }
+
         // If we have manually adjusted the font size, keep it that way.
         if (self.font_size_adjusted) {
             log.info("font size manually adjusted, preserving previous size on config reload", .{});
