@@ -70,25 +70,9 @@ jobs:
           name: ghostty-custom-aarch64-apple-darwin
           path: ${{ env.ARTIFACT }}
 
-  linux:
-    name: Build Linux ${{ matrix.arch }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runs-on: ubuntu-latest
-            linux_artifact: ghostty-custom-x86_64-linux-musl.tar.gz
-            zig_cache: laputa-x86_64-linux-musl
-            elf_match: "ELF 64-bit LSB.*x86-64"
-            musl_ld: "ld-musl-x86_64"
-          - arch: aarch64
-            runs-on: ubuntu-24.04-arm
-            linux_artifact: ghostty-custom-aarch64-linux-musl.tar.gz
-            zig_cache: laputa-aarch64-linux-musl
-            elf_match: "ELF 64-bit LSB.*aarch64"
-            musl_ld: "ld-musl-aarch64"
-    runs-on: ${{ matrix.runs-on }}
+  linux-x64:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
     container: alpine:edge
     permissions:
       actions: write
@@ -107,7 +91,7 @@ jobs:
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.17.0
-          cache-key: ${{ matrix.zig_cache }}
+          cache-key: laputa-x86_64-linux-musl
 
       - name: Verify Zig in container PATH
         run: zig version
@@ -120,8 +104,8 @@ jobs:
       - name: Verify musl static-ish binary
         run: |
           file zig-out/bin/ghostty | tee file.txt
-          grep -q "${{ matrix.elf_match }}" file.txt
-          grep -q "musl" file.txt || readelf -l zig-out/bin/ghostty | grep -q "${{ matrix.musl_ld }}"
+          grep -q "ELF 64-bit LSB.*x86-64" file.txt
+          grep -q "musl" file.txt || readelf -l zig-out/bin/ghostty | grep -q "ld-musl-x86_64"
           readelf -d zig-out/bin/ghostty | tee dyn.txt
           test "$(grep -c NEEDED dyn.txt)" -le 5
           ! grep NEEDED dyn.txt | grep -Ei "gtk|adwaita|glib|X11|libGL\.|libc\.so\.6"
@@ -129,16 +113,64 @@ jobs:
           ./zig-out/bin/ghostty +show-config > /dev/null
 
       - name: Package binary
-        run: tar czf "${{ matrix.linux_artifact }}" -C zig-out/bin ghostty
+        run: tar czf "${{ env.LINUX_ARTIFACT_X64 }}" -C zig-out/bin ghostty
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ghostty-custom-${{ matrix.arch }}-linux-musl
-          path: ${{ matrix.linux_artifact }}
+          name: ghostty-custom-x86_64-linux-musl
+          path: ${{ env.LINUX_ARTIFACT_X64 }}
+
+  linux-arm64:
+    name: Build Linux aarch64
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # JS actions cannot run inside Alpine containers on ARM runners, so the
+      # musl build runs in Alpine via docker CLI from the Ubuntu host. This
+      # keeps the same mostly-static musl artifact as x86_64.
+      - name: Build Laputa Wayland binary in Alpine
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "${{ github.workspace }}:/work" -w /work \
+            -e LINUX_ARTIFACT_ARM64 \
+            alpine:edge sh -c '
+              set -ex
+              apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig tar zstd curl \
+                wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses
+              curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.17.0/zig-aarch64-linux-0.17.0.tar.xz
+              mkdir -p /opt && tar -xf /tmp/zig.tar.xz -C /opt
+              export PATH=/opt/zig-aarch64-linux-0.17.0:$PATH
+              zig version
+              zig build -Dapp-runtime=wayland -Doptimize=ReleaseFast -Dstrip=true \
+                -Demit-themes=false -Di18n=false > /tmp/build.log 2>&1
+              tail -50 /tmp/build.log
+              file zig-out/bin/ghostty | tee file.txt
+              grep -q "ELF 64-bit LSB.*aarch64" file.txt
+              grep -q "musl" file.txt || readelf -l zig-out/bin/ghostty | grep -q "ld-musl-aarch64"
+              readelf -d zig-out/bin/ghostty | tee dyn.txt
+              test "$(grep -c NEEDED dyn.txt)" -le 5
+              ! grep NEEDED dyn.txt | grep -Ei "gtk|adwaita|glib|X11|libGL\.|libc\.so\.6"
+              ./zig-out/bin/ghostty --version | grep -q "wayland"
+              ./zig-out/bin/ghostty +show-config > /dev/null
+              tar czf "$LINUX_ARTIFACT_ARM64" -C zig-out/bin ghostty
+            '
+        env:
+          LINUX_ARTIFACT_ARM64: ${{ env.LINUX_ARTIFACT_ARM64 }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ghostty-custom-aarch64-linux-musl
+          path: ${{ env.LINUX_ARTIFACT_ARM64 }}
 
   release:
     name: Create pre-release
-    needs: [build, linux]
+    needs: [build, linux-x64, linux-arm64]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
