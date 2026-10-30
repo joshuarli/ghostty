@@ -2,6 +2,11 @@ name: release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Version tag to publish (e.g. v1.4.1-custom.1). Empty keeps the SHA pre-release only."
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -12,6 +17,11 @@ concurrency:
 defaults:
   run:
     shell: bash -euo pipefail {0}
+
+env:
+  APP_NAME: Ghostty Custom
+  BUNDLE_ID: com.joshuarli.ghostty-custom
+  ARTIFACT: Ghostty-Custom-aarch64-apple-darwin.zip
 
 jobs:
   build:
@@ -42,17 +52,30 @@ jobs:
       - name: Build GhosttyKit
         run: zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos -Dxcframework-target=native -Demit-macos-app=false -Dsentry=false
 
-      - name: Build Ghostty.app
+      - name: Build app
         working-directory: macos
-        run: xcodebuild -target Ghostty -configuration ReleaseLocal -arch arm64 MACOSX_DEPLOYMENT_TARGET=27.0
+        run: xcodebuild -target Ghostty -configuration ReleaseLocal -arch arm64 PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" INFOPLIST_KEY_CFBundleDisplayName="$APP_NAME"
+
+      - name: Verify bundle
+        run: |
+          app="macos/build/ReleaseLocal/Ghostty.app"
+          test -x "$app/Contents/MacOS/ghostty"
+          test "$(lipo -archs "$app/Contents/MacOS/ghostty")" = arm64
+          test "$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")" = "$BUNDLE_ID"
+          test "$(plutil -extract CFBundleDisplayName raw "$app/Contents/Info.plist")" = "$APP_NAME"
+          codesign -dv --strict "$app" 2>&1 | grep -q "adhoc"
 
       - name: Package app
-        run: ditto -c -k --sequesterRsrc --keepParent macos/build/ReleaseLocal/Ghostty.app ghostty-aarch64-apple-darwin.zip
+        run: |
+          rm -rf pkg
+          mkdir pkg
+          ditto "macos/build/ReleaseLocal/Ghostty.app" "pkg/$APP_NAME.app"
+          ditto -c -k --sequesterRsrc --keepParent "pkg/$APP_NAME.app" "$ARTIFACT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ghostty-aarch64-apple-darwin
-          path: ghostty-aarch64-apple-darwin.zip
+          name: ghostty-custom-aarch64-apple-darwin
+          path: ${{ env.ARTIFACT }}
 
   release:
     name: Create pre-release
@@ -65,17 +88,36 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: ghostty-*
+          pattern: ghostty-custom-*
           path: dist
           merge-multiple: true
 
+      - name: Checksum manifest
+        run: |
+          (cd dist && shasum -a 256 "$ARTIFACT" > SHA256SUMS)
+          cat dist/SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > dist/COMMIT
+
       - name: Create pre-release
+        if: ${{ inputs.release_tag == '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: release-${{ github.sha }}
         run: |
-          gh release create "$RELEASE_TAG" dist/*.zip \
+          gh release create "$RELEASE_TAG" dist/"$ARTIFACT" dist/SHA256SUMS dist/COMMIT \
             --repo "$GITHUB_REPOSITORY" \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "$RELEASE_TAG"
+            --title "$RELEASE_TAG" \
+            --notes "Ad-hoc signed macOS arm64 build of Ghostty Custom at commit $GITHUB_SHA. Not notarized; not an official Ghostty release."
+
+      - name: Publish versioned release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.release_tag }}" dist/"$ARTIFACT" dist/SHA256SUMS dist/COMMIT \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "${{ inputs.release_tag }}" \
+            --notes "Ad-hoc signed macOS arm64 build of Ghostty Custom at commit $GITHUB_SHA. Not notarized; not an official Ghostty release."
