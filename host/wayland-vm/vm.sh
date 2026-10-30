@@ -40,7 +40,7 @@ running() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
 clean_tree() { [ -z "$(git -C "$repo" status --porcelain)" ] || die "commit changes first; the VM provisions HEAD"; }
 guest_ssh() { ssh $ssh_opts root@127.0.0.1 "$@"; }
 monitor() { { printf '%s\n' "$1"; sleep 1; } | nc -U "$work/monitor.sock" >/dev/null; }
-send() { printf '%s\r' "$1" >&3; }
+send() { printf '%s\r' "$1" >&3 || fail 'serial write failed'; }
 size() { echo $(($(wc -c < "$console"))); }
 since() { tail -c "+$(($1 + 1))" "$console"; }
 fail() {
@@ -95,8 +95,9 @@ sys.exit(0 if frac > 0.02 else 1)
 EOF
 }
 boot() {
-	rm -f "$work/serial.sock" "$work/qemu.pid" "$work/console.fifo"
+	rm -f "$work/serial.sock" "$work/monitor.sock" "$work/qemu.pid" "$work/console.fifo"
 	: > "$console"
+	[ -n "${qemu:-}" ] || fail 'empty qemu command'
 	$qemu || fail 'qemu did not start'
 	mkfifo "$work/console.fifo"
 	nc -U "$work/serial.sock" < "$work/console.fifo" >> "$console" &
