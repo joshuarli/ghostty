@@ -47,25 +47,25 @@ pub const Connection = struct {
     alloc: Allocator,
 
     pub fn connect(self: *Connection, alloc: Allocator, seat_events: SeatEvents) !void {
-        const display = try wl.Display.connect(null);
-        errdefer display.disconnect();
-        const registry = try display.getRegistry();
-        errdefer registry.destroy();
-        const wake_fd = libc.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
-        if (wake_fd < 0) return error.EventFdFailed;
-        errdefer _ = libc.close(wake_fd);
-        self.* = .{
-            .display = display,
-            .registry = registry,
-            .globals = .{},
-            .seat = null,
-            .seat_events = seat_events,
-            .wake_fd = wake_fd,
-            .alloc = alloc,
-        };
-        errdefer if (self.seat) |st| st.deinit();
-        errdefer if (self.clipboard) |*clipboard| clipboard.deinit();
-        registry.setListener(*Connection, onRegistryEvent, self);
+        {
+            const display = try wl.Display.connect(null);
+            errdefer display.disconnect();
+            const registry = try display.getRegistry();
+            errdefer registry.destroy();
+            const wake_fd = libc.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
+            if (wake_fd < 0) return error.EventFdFailed;
+            self.* = .{
+                .display = display,
+                .registry = registry,
+                .globals = .{},
+                .seat = null,
+                .seat_events = seat_events,
+                .wake_fd = wake_fd,
+                .alloc = alloc,
+            };
+        }
+        errdefer self.disconnect();
+        self.registry.setListener(*Connection, onRegistryEvent, self);
         try roundtrip(self);
         try roundtrip(self);
         if (self.globals.compositor == null) return error.NoCompositor;
