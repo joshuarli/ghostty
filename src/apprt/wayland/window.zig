@@ -16,8 +16,17 @@ const log = std.log.scoped(.wayland);
 /// buffer is busy; a released buffer of the wrong generation is discarded.
 const max_buffers = 3;
 const max_total_shm_bytes = 512 * 1024 * 1024;
+const max_damage_history = 8;
+const max_damage_rects = 64;
 
 pub const DamageRect = @import("../../renderer/software/Damage.zig").Rect;
+
+const DamageEntry = struct {
+    revision: u64 = 0,
+    full: bool = true,
+    rects: [16]DamageRect = undefined,
+    len: u8 = 0,
+};
 
 pub const Window = struct {
     conn: *Connection,
@@ -33,6 +42,10 @@ pub const Window = struct {
     width: u32,
     height: u32,
     buffers: std.ArrayListUnmanaged(*BufferSlot) = .empty,
+    damage_history: [max_damage_history]DamageEntry = @splat(.{}),
+    damage_history_count: u8 = 0,
+    damage_history_next: u8 = 0,
+    damage_scratch: [max_damage_rects]DamageRect = undefined,
     frame_pending: bool,
     closed: bool,
 
@@ -161,10 +174,7 @@ pub const Window = struct {
         }
 
         self.surface.attach(slot.buffer, 0, 0);
-        const incremental = if (slot.has_revision and slot.revision +% 1 == revision)
-            damage
-        else
-            null;
+        const incremental = self.incrementalDamage(slot, revision, damage);
         if (incremental) |rects| {
             if (self.surface.getVersion() >= wl.Surface.damage_buffer_since_version) {
                 for (rects) |rect| {
@@ -197,7 +207,66 @@ pub const Window = struct {
         slot.revision = revision;
         slot.has_revision = true;
         self.surface.commit();
+        self.recordDamage(revision, damage);
         self.conn.flush();
+    }
+
+    /// Return damage that repairs `slot` from its stored revision to the
+    /// incoming one. Stale or incomplete history forces a full-buffer damage.
+    fn incrementalDamage(
+        self: *Window,
+        slot: *const BufferSlot,
+        revision: u64,
+        current: ?[]const DamageRect,
+    ) ?[]const DamageRect {
+        if (!slot.has_revision or revision <= slot.revision) return null;
+        if (revision - slot.revision == 1) return current;
+
+        if (revision - slot.revision > max_damage_history) return null;
+        var len: usize = 0;
+        var rev = slot.revision + 1;
+        while (rev < revision) : (rev += 1) {
+            const entry = self.damageEntry(rev) orelse return null;
+            if (entry.full) return null;
+            if (len + entry.len > self.damage_scratch.len) return null;
+            @memcpy(self.damage_scratch[len..][0..entry.len], entry.rects[0..entry.len]);
+            len += entry.len;
+        }
+        const current_rects = current orelse return null;
+        if (len + current_rects.len > self.damage_scratch.len) return null;
+        @memcpy(self.damage_scratch[len..][0..current_rects.len], current_rects);
+        len += current_rects.len;
+        if (len == 0) return &.{};
+        return self.damage_scratch[0..len];
+    }
+
+    fn damageEntry(self: *const Window, revision: u64) ?*const DamageEntry {
+        var i: u8 = 0;
+        while (i < self.damage_history_count) : (i += 1) {
+            const index = (self.damage_history_next + max_damage_history - 1 - i) % max_damage_history;
+            const entry = &self.damage_history[index];
+            if (entry.revision == revision) return entry;
+        }
+        return null;
+    }
+
+    fn recordDamage(self: *Window, revision: u64, damage: ?[]const DamageRect) void {
+        const entry = &self.damage_history[self.damage_history_next];
+        entry.revision = revision;
+        entry.full = false;
+        entry.len = 0;
+        if (damage) |rects| {
+            if (rects.len > entry.rects.len) {
+                entry.full = true;
+            } else {
+                @memcpy(entry.rects[0..rects.len], rects);
+                entry.len = @intCast(rects.len);
+            }
+        } else {
+            entry.full = true;
+        }
+        self.damage_history_next = (self.damage_history_next + 1) % max_damage_history;
+        self.damage_history_count = @min(self.damage_history_count + 1, max_damage_history);
     }
 
     fn acquireSlot(self: *Window, width: u32, height: u32) !*BufferSlot {
@@ -370,4 +439,29 @@ test "physical pixels follow the fractional scale numerator" {
     win.height = 50;
     try std.testing.expectEqual(@as(u32, 150), win.pixelWidth());
     try std.testing.expectEqual(@as(u32, 75), win.pixelHeight());
+}
+
+test "damage history unions missed revisions and rejects stale buffers" {
+    var win: Window = undefined;
+    win.damage_history = @splat(.{});
+    win.damage_history_count = 0;
+    win.damage_history_next = 0;
+
+    var slot: BufferSlot = undefined;
+    slot.has_revision = true;
+    slot.revision = 1;
+
+    const first = [_]DamageRect{.{ .x = 0, .y = 1, .width = 4, .height = 1 }};
+    const second = [_]DamageRect{.{ .x = 0, .y = 2, .width = 4, .height = 1 }};
+    const current = [_]DamageRect{.{ .x = 0, .y = 3, .width = 4, .height = 1 }};
+    win.recordDamage(2, &first);
+    win.recordDamage(3, &second);
+
+    const merged = win.incrementalDamage(&slot, 3, &current) orelse return error.MissingDamage;
+    try std.testing.expectEqual(@as(usize, 3), merged.len);
+    try std.testing.expectEqual(@as(u32, 1), merged[0].y);
+    try std.testing.expectEqual(@as(u32, 3), merged[2].y);
+
+    slot.revision = 0;
+    try std.testing.expect(win.incrementalDamage(&slot, 10, &current) == null);
 }
