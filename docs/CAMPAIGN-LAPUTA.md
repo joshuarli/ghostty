@@ -3,9 +3,9 @@
 ## Status
 
 Goal: `src/apprt/wayland/` native Wayland runtime in this fork, musl, no GTK/X11/D-Bus, single window, in two profiles that share one apprt: OpenGL (GPU renderer, frames read back to CPU and presented through `wl_shm`) and software (`-Drenderer=software`, CPU rasterizer, fully static musl; see `docs/SOFTWARE-WAYLAND.md`). QEMU-proven.
-Done: both profiles build; `zig build test -Dapp-runtime=wayland -Drenderer=software -Dtest-filter=wayland` runs the apprt submodule tests, which were not compiled into the test binary before; review fixes landed for connection teardown order, dmabuf double close, key repeat, keyboard focus, keymap descriptor, text-input-v3 IME, and software frame copies; release workflow publishes a static x86_64 software artifact with `PT_INTERP`/`DT_NEEDED` checks.
-Not done: M2 (full `zig build test` green and `sh host/wayland-vm/vm.sh test` PASS twice) is not re-established on this tree; DMA-BUF is not negotiated, so the OpenGL profile pays GPU readback; pixel-differential tests for the CPU rasterizer.
-Next: M2 on the current tree, then the rasterizer pixel-differential tests.
+Done: both profiles build; full `zig build test -Dapp-runtime=wayland -Drenderer=software` is green (4206 passed, 44 skipped) and `sh host/wayland-vm/vm.sh test` PASSes twice from a fresh `setup` with the static ReleaseFast binary (M2); the apprt and software-backend tests are now compiled into the suite, where they were not before; review fixes landed for connection teardown order, dmabuf double close, key repeat, keyboard focus, keymap descriptor, shm format check, text-input-v3 IME, and software frame copies; `host/wayland-fake/run.sh` checks input method traffic, compositor loss, and a missing shm format against a scripted compositor; pixel-differential tests compare the CPU rasterizer with a reference transcribed from the GLSL shaders and fixed six divergences; release workflow publishes a static x86_64 software artifact with `PT_INTERP`/`DT_NEEDED` checks.
+Not done: DMA-BUF is not negotiated, so the OpenGL profile pays GPU readback; a real input method has not been exercised; the rasterizer is not benchmarked.
+Next: benchmark the software profile against its own baseline before further optimization.
 Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `sh host/wayland-vm/vm.sh test`.
 
 ## Charter
