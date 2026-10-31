@@ -17,6 +17,7 @@ const Uniforms = types.Uniforms;
 const CellText = types.CellText;
 const CellBg = types.CellBg;
 const Image = types.Image;
+const BgImage = types.BgImage;
 
 const Rgba = [4]f64;
 
@@ -115,6 +116,8 @@ const Scene = struct {
     color: RgbaImage,
     images: []const Image = &.{},
     image: RgbaImage = .{ .width = 1, .height = 1, .data = &.{ 0, 0, 0, 0 } },
+    bg_image: ?BgImage = null,
+    bg_image_texture: RgbaImage = .{ .width = 1, .height = 1, .data = &.{ 0, 0, 0, 0 } },
 };
 
 fn pixelIsCovered(px: u32, py: u32, x: f64, y: f64, w: f64, h: f64) bool {
@@ -183,6 +186,80 @@ fn textFragment(scene: Scene, inst: CellText, coverage: f64) Rgba {
     return color;
 }
 
+fn backgroundImageFragment(scene: Scene, info: BgImage, px: u32, py: u32) Rgba {
+    const u = scene.uniforms;
+    const linear = u.bools.use_linear_blending;
+    const tex_w: f64 = @floatFromInt(scene.bg_image_texture.width);
+    const tex_h: f64 = @floatFromInt(scene.bg_image_texture.height);
+    const screen_w: f64 = u.screen_size[0];
+    const screen_h: f64 = u.screen_size[1];
+
+    var dest_w = tex_w;
+    var dest_h = tex_h;
+    switch (info.info.fit) {
+        .contain => {
+            const k = @min(screen_w / tex_w, screen_h / tex_h);
+            dest_w = tex_w * k;
+            dest_h = tex_h * k;
+        },
+        .cover => {
+            const k = @max(screen_w / tex_w, screen_h / tex_h);
+            dest_w = tex_w * k;
+            dest_h = tex_h * k;
+        },
+        .stretch => {
+            dest_w = screen_w;
+            dest_h = screen_h;
+        },
+        .none => {},
+    }
+    const mid_x = (screen_w - dest_w) / 2;
+    const mid_y = (screen_h - dest_h) / 2;
+    const end_x = screen_w - dest_w;
+    const end_y = screen_h - dest_h;
+    const offset: [2]f64 = switch (info.info.position) {
+        .tl => .{ 0, 0 },
+        .tc => .{ mid_x, 0 },
+        .tr => .{ end_x, 0 },
+        .ml => .{ 0, mid_y },
+        .mc => .{ mid_x, mid_y },
+        .mr => .{ end_x, mid_y },
+        .bl => .{ 0, end_y },
+        .bc => .{ mid_x, end_y },
+        .br => .{ end_x, end_y },
+    };
+
+    var tx = (@as(f64, @floatFromInt(px)) + 0.5 - offset[0]) * (tex_w / dest_w);
+    var ty = (@as(f64, @floatFromInt(py)) + 0.5 - offset[1]) * (tex_h / dest_h);
+    if (info.info.repeat) {
+        tx = @mod(@mod(tx, tex_w) + tex_w, tex_w);
+        ty = @mod(@mod(ty, tex_h) + tex_h, tex_h);
+    }
+
+    var rgba: Rgba = .{ 0, 0, 0, 0 };
+    if (!(tx < 0 or ty < 0 or tx > tex_w or ty > tex_h)) {
+        rgba = scene.bg_image_texture.bilinear(tx - 0.5, ty - 0.5);
+        if (!linear) for (rgba[0..3]) |*c| {
+            c.* = encode(c.*);
+        };
+        for (rgba[0..3]) |*c| c.* *= rgba[3];
+    }
+
+    const bg_a = @as(f64, @floatFromInt(u.bg_color[3])) / 255;
+    const factor = @min(@as(f64, info.opacity), 1 / bg_a);
+    for (&rgba) |*c| c.* *= factor;
+    const bg = loadColor(.{ u.bg_color[0], u.bg_color[1], u.bg_color[2], 255 }, linear);
+    const inv = 1 - rgba[3];
+    rgba = .{
+        rgba[0] + @max(0, bg[0] * inv),
+        rgba[1] + @max(0, bg[1] * inv),
+        rgba[2] + @max(0, bg[2] * inv),
+        rgba[3] + @max(0, inv),
+    };
+    for (&rgba) |*c| c.* *= bg_a;
+    return rgba;
+}
+
 fn renderReference(alloc: std.mem.Allocator, scene: Scene, width: u32, height: u32) ![]Rgba {
     const u = scene.uniforms;
     const linear = u.bools.use_linear_blending;
@@ -191,6 +268,17 @@ fn renderReference(alloc: std.mem.Allocator, scene: Scene, width: u32, height: u
 
     const bg = loadColor(u.bg_color, linear);
     @memset(fb, bg);
+
+    if (scene.bg_image) |info| {
+        var by: u32 = 0;
+        while (by < height) : (by += 1) {
+            var bx: u32 = 0;
+            while (bx < width) : (bx += 1) {
+                const index = @as(usize, by) * width + bx;
+                fb[index] = over(fb[index], backgroundImageFragment(scene, info, bx, by));
+            }
+        }
+    }
 
     const cw: f64 = u.cell_size[0];
     const ch: f64 = u.cell_size[1];
@@ -330,8 +418,17 @@ fn renderRaster(alloc: std.mem.Allocator, scene: Scene, width: u32, height: u32)
     );
     defer image.deinit();
 
+    var bg_texture = try Texture.init(
+        .{ .alloc = alloc, .format = .rgba, .min_filter = .linear, .mag_filter = .linear },
+        scene.bg_image_texture.width,
+        scene.bg_image_texture.height,
+        scene.bg_image_texture.data,
+    );
+    defer bg_texture.deinit();
+
     raster.clear(&target, .full, .{ 0, 0, 0, 0 });
     raster.drawBgColor(&target, .full, &scene.uniforms);
+    if (scene.bg_image) |info| raster.drawBgImage(&target, .full, &scene.uniforms, info, &bg_texture);
     raster.drawCellBg(&target, .full, &scene.uniforms, handleOf(CellBg, scene.cell_bg));
     raster.drawCellText(
         &target,
@@ -680,5 +777,34 @@ test "minimum contrast recolors text before the cursor overrides it" {
             .gray = .{ .width = 32, .height = 32, .data = &atlas },
             .color = empty_color,
         }, 24, 32, toleranceFor(mode));
+    }
+}
+
+test "background images fit, position, tile, and fade like the bg image shader" {
+    const atlas = patternAtlas(8);
+    const bg: [6]CellBg = @splat(.{ 0, 0, 0, 0 });
+    const pixels = kittyImage();
+    const cases = [_]BgImage{
+        .{ .opacity = 0.8, .info = .{ .position = .mc, .fit = .contain, .repeat = false } },
+        .{ .opacity = 1.0, .info = .{ .position = .tl, .fit = .cover, .repeat = false } },
+        .{ .opacity = 0.5, .info = .{ .position = .br, .fit = .stretch, .repeat = false } },
+        .{ .opacity = 0.9, .info = .{ .position = .tc, .fit = .none, .repeat = true } },
+    };
+    for (cases) |info| {
+        for (all_modes) |mode| {
+            for ([_]u8{ 255, 200 }) |bg_alpha| {
+                var u = uniformsFor(mode, 3, 2, .{ 8, 16 }, .{ 0, 0, 0, 0 });
+                u.bg_color[3] = bg_alpha;
+                try expectMatchesReference(.{
+                    .uniforms = u,
+                    .cell_bg = &bg,
+                    .text = &.{},
+                    .gray = .{ .width = 8, .height = 8, .data = &atlas },
+                    .color = empty_color,
+                    .bg_image = info,
+                    .bg_image_texture = .{ .width = 6, .height = 5, .data = &pixels },
+                }, 24, 32, toleranceFor(mode));
+            }
+        }
     }
 }
