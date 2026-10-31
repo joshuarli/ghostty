@@ -5,7 +5,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const engine = @import("engine.zig");
-const mixer = @import("mixer.zig");
+const render_mod = @import("render.zig");
 
 comptime {
     if (builtin.os.tag != .macos) @compileError("keyboard sound audio is macOS only");
@@ -105,33 +105,9 @@ extern "c" fn AudioOutputUnitStart(unit: AudioUnit) i32;
 extern "c" fn AudioOutputUnitStop(unit: AudioUnit) i32;
 extern "c" fn pthread_setname_np(name: [*:0]const u8) void;
 
-const RenderResult = struct {
-    sounding: bool,
-    fresh: bool,
-};
-
-const RenderState = struct {
-    shared: *engine.Shared,
-    mixer: mixer.Mixer,
-    consumer: engine.PlayRing.Consumer,
-};
-
-fn renderInto(state: *RenderState, left: []f32, right: []f32) RenderResult {
-    const shared = state.shared;
-    const gate = shared.enabled.load(.monotonic) and shared.ghostty_active.load(.acquire);
-    const drop_before = shared.drop_before.load(.acquire);
-    var fresh = false;
-    while (state.consumer.pop()) |play| {
-        if (gate and play.seq >= drop_before) {
-            state.mixer.start(&play);
-            fresh = true;
-        }
-    }
-    const master: f32 = if (gate) shared.masterGain() else 0;
-    const sounding = state.mixer.render(left, right, master);
-    if (!gate) state.mixer.clear();
-    return .{ .sounding = sounding and gate, .fresh = fresh };
-}
+const RenderResult = render_mod.RenderResult;
+const RenderState = render_mod.RenderState;
+const renderInto = render_mod.renderInto;
 
 fn discard(state: *RenderState, frames: usize) RenderResult {
     var fresh = false;
@@ -318,7 +294,7 @@ const Control = struct {
                 park(self.shared, poll_ns);
                 if (self.shared.shutdown.load(.acquire)) break;
                 const silent = self.shared.silent_frames.load(.monotonic);
-                const idle = silent >= idleFrames(self.rate);
+                const idle = silent >= render_mod.idleFrames(self.rate, 15.0);
                 const alive = if (self.unit) |*unit| unit.isRunning() else false;
                 if (idle or !alive) self.stop();
             } else if (self.hasPending()) {
@@ -359,7 +335,7 @@ const Control = struct {
             self.noteFailure("configure", unit.status);
             return false;
         };
-        self.state.mixer.setOutRate(rate);
+        self.state.setOutRate(rate);
         self.rate = rate;
         return true;
     }
@@ -384,7 +360,7 @@ const Control = struct {
         self.running = false;
         self.shared.audio_running.store(false, .seq_cst);
         _ = self.shared.wake.fetchAdd(0, .seq_cst);
-        self.state.mixer.clear();
+        self.state.clear();
         log.debug("keyboard sound output stopped", .{});
     }
 
@@ -397,7 +373,7 @@ const Control = struct {
         self.unit = null;
         self.running = false;
         self.shared.audio_running.store(false, .seq_cst);
-        self.state.mixer.clear();
+        self.state.clear();
     }
 
     fn noteFailure(self: *Control, what: []const u8, status: i32) void {
@@ -469,65 +445,12 @@ fn park(shared: *engine.Shared, timeout_ns: ?u64) void {
     _ = std.c.__ulock_wait2(op, &shared.wake.raw, 0, timeout, 0);
 }
 
-fn idleFrames(rate: f64) u64 {
-    if (!(rate > 0) or !std.math.isFinite(rate)) return std.math.maxInt(u64);
-    const frames = rate * 15.0;
-    if (frames >= @as(f64, @floatFromInt(std.math.maxInt(u64)))) return std.math.maxInt(u64);
-    return @intFromFloat(frames);
-}
-
 test "sound: coreaudio struct sizes" {
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(AudioStreamBasicDescription));
     try std.testing.expectEqual(@as(usize, 20), @sizeOf(AudioComponentDescription));
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(AudioBuffer));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(AudioBufferList));
     try std.testing.expectEqual(@as(u32, 0x61756F75), unit_type_output);
-}
-
-test "sound: render plays one attack and drops it after focus loss" {
-    var shared = engine.Shared.init(.{ .volume = 1, .focused = true });
-    var ring: engine.PlayRing.Shared = .{};
-    var ends = engine.PlayRing.reset(&ring);
-    var state = RenderState{
-        .shared = &shared,
-        .mixer = .init(48_000),
-        .consumer = ends.consumer,
-    };
-    var left: [8]f32 = undefined;
-    var right: [8]f32 = undefined;
-    _ = renderInto(&state, &left, &right);
-
-    const samples = [_]i16{ 0, 0, 30_000, 0, 0, 0 };
-    try std.testing.expect(ends.producer.push(.{
-        .samples = &samples,
-        .src_rate = 48_000,
-        .seq = shared.next_seq.fetchAdd(1, .monotonic),
-    }));
-    const played = renderInto(&state, &left, &right);
-    try std.testing.expect(played.fresh);
-    try std.testing.expect(played.sounding);
-    try std.testing.expect(left[0] > 0.5);
-
-    shared.drop_before.store(shared.next_seq.load(.monotonic), .release);
-    try std.testing.expect(ends.producer.push(.{
-        .samples = &samples,
-        .src_rate = 48_000,
-        .seq = 0,
-    }));
-    const dropped = renderInto(&state, &left, &right);
-    try std.testing.expect(!dropped.fresh);
-
-    shared.ghostty_active.store(false, .release);
-    try std.testing.expect(ends.producer.push(.{
-        .samples = &samples,
-        .src_rate = 48_000,
-        .seq = shared.next_seq.fetchAdd(1, .monotonic),
-    }));
-    const inactive = renderInto(&state, &left, &right);
-    try std.testing.expect(!inactive.fresh);
-    try std.testing.expect(!inactive.sounding);
-    try std.testing.expectEqual(@as(f32, 0), left[0]);
-    try std.testing.expectEqual(@as(usize, 0), state.mixer.activeVoices());
 }
 
 test "sound: audio output starts and stops" {

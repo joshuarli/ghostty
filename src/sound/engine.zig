@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const mixer = @import("mixer.zig");
 const pack = @import("pack.zig");
 
@@ -200,6 +201,13 @@ pub const Action = enum(c_int) {
     flags_changed = 3,
 };
 
+pub const Bell = struct {
+    enabled: bool = false,
+    volume: f32 = 1,
+    /// A PCM WAV file, or null for the built-in tone.
+    path: ?[]const u8 = null,
+};
+
 pub const Settings = struct {
     volume: f32 = 0.2,
     release: bool = true,
@@ -207,6 +215,9 @@ pub const Settings = struct {
     spatial: bool = true,
     focused: bool = false,
     enabled: bool = true,
+    bell: Bell = .{},
+    /// The playback device on Linux, as `hw:CARD,DEVICE`, or empty to choose one.
+    device: []const u8 = "",
 };
 
 pub const Shared = struct {
@@ -216,6 +227,8 @@ pub const Shared = struct {
     variation: std.atomic.Value(bool) = .init(true),
     spatial: std.atomic.Value(bool) = .init(true),
     volume_bits: std.atomic.Value(u32) = .init(@bitCast(@as(f32, 1.0))),
+    bell_enabled: std.atomic.Value(bool) = .init(false),
+    bell_volume_bits: std.atomic.Value(u32) = .init(@bitCast(@as(f32, 1.0))),
     audio_running: std.atomic.Value(bool) = .init(false),
     silent_frames: std.atomic.Value(u64) = .init(0),
     shutdown: std.atomic.Value(bool) = .init(false),
@@ -235,7 +248,18 @@ pub const Shared = struct {
         shared.release.store(s.release, .monotonic);
         shared.variation.store(s.variation, .monotonic);
         shared.spatial.store(s.spatial, .monotonic);
+        shared.applyBell(s.bell);
         return shared;
+    }
+
+    pub fn applyBell(self: *Shared, bell: Bell) void {
+        const v: f32 = if (!std.math.isFinite(bell.volume)) 0 else std.math.clamp(bell.volume, 0, 1);
+        self.bell_volume_bits.store(@bitCast(v), .monotonic);
+        self.bell_enabled.store(bell.enabled, .monotonic);
+    }
+
+    pub fn bellGain(self: *const Shared) f32 {
+        return @bitCast(self.bell_volume_bits.load(.monotonic));
     }
 
     pub fn volume(self: *const Shared) f32 {
@@ -378,8 +402,11 @@ pub const KeyState = struct {
         return self.isPressed(code.control) or self.isPressed(code.right_control);
     }
 
+    /// Linux has no command key. Its terminal copy and paste chord is
+    /// ctrl+shift, so that chord stands in for it.
     pub fn cmdHeld(self: *const KeyState) bool {
-        return self.isPressed(code.command) or self.isPressed(code.right_command);
+        if (self.isPressed(code.command) or self.isPressed(code.right_command)) return true;
+        return builtin.os.tag == .linux and self.ctrlHeld() and self.shiftHeld();
     }
 
     pub fn shiftHeld(self: *const KeyState) bool {
@@ -613,6 +640,12 @@ pub fn Voicer(comptime capacity: usize) type {
             if (!down and !self.shared.release.load(.monotonic)) return false;
             if (down) if (specialVoice(keycode, ctrl_held, cmd_held, shift_held)) |voice| return self.queueSpecial(keycode, voice);
             return self.queue(keycode, down, 0);
+        }
+
+        /// Plays `samples` as a bell. The bell ignores keyboard focus and volume.
+        pub fn ringBell(self: *Self, samples: []const i16, rate: u32) bool {
+            if (!self.shared.bell_enabled.load(.monotonic)) return false;
+            return self.emit(.{ .samples = samples, .src_rate = rate, .bell = true });
         }
 
         fn queue(self: *Self, keycode: u8, down: bool, delay_us: u32) bool {
@@ -1366,4 +1399,15 @@ test "sound: command modifier and caps each produce one attack" {
     try std.testing.expect(h.consumer.pop() != null);
     try std.testing.expect(h.consumer.pop() != null);
     try std.testing.expectEqual(@as(?mixer.Play, null), h.consumer.pop());
+}
+
+test "linux treats ctrl+shift as the command chord" {
+    if (builtin.os.tag != .linux) return;
+    var held: KeyState = .{};
+    _ = held.keyDown(code.control, false);
+    try std.testing.expect(!held.cmdHeld());
+    _ = held.keyDown(code.shift, false);
+    try std.testing.expect(held.cmdHeld());
+    _ = held.keyUp(code.control);
+    try std.testing.expect(!held.cmdHeld());
 }

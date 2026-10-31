@@ -20,6 +20,7 @@ pub const Play = struct {
     gain_r: f32 = 1,
     delay_us: u32 = 0,
     seq: u64 = 0,
+    bell: bool = false,
 };
 
 const Voice = struct {
