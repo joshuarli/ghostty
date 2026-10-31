@@ -3,8 +3,8 @@
 ## Status
 
 Goal: `src/apprt/wayland/` native Wayland runtime in this fork, musl, no GTK/X11/D-Bus, single window, in two profiles that share one apprt: OpenGL (GPU renderer, frames read back to CPU and presented through `wl_shm`) and software (`-Drenderer=software`, CPU rasterizer, fully static musl; see `docs/SOFTWARE-WAYLAND.md`). QEMU-proven.
-Done: both profiles build; `zig build test -Dapp-runtime=wayland -Drenderer=software -Dtest-filter=wayland` runs the apprt submodule tests, which were not compiled into the test binary before; review fixes landed for connection teardown order, dmabuf double close, key repeat, keyboard focus, keymap descriptor, and software frame copies; release workflow publishes a static x86_64 software artifact with `PT_INTERP`/`DT_NEEDED` checks.
-Not done: M2 (full `zig build test` green and `sh host/wayland-vm/vm.sh test` PASS twice) is not re-established on this tree; DMA-BUF is not negotiated, so the OpenGL profile pays GPU readback; text-input-v3 IME; pixel-differential tests for the CPU rasterizer; Foot comparison benchmarks; aarch64 static software artifact.
+Done: both profiles build; `zig build test -Dapp-runtime=wayland -Drenderer=software -Dtest-filter=wayland` runs the apprt submodule tests, which were not compiled into the test binary before; review fixes landed for connection teardown order, dmabuf double close, key repeat, keyboard focus, keymap descriptor, text-input-v3 IME, and software frame copies; release workflow publishes a static x86_64 software artifact with `PT_INTERP`/`DT_NEEDED` checks.
+Not done: M2 (full `zig build test` green and `sh host/wayland-vm/vm.sh test` PASS twice) is not re-established on this tree; DMA-BUF is not negotiated, so the OpenGL profile pays GPU readback; pixel-differential tests for the CPU rasterizer.
 Next: M2 on the current tree, then the rasterizer pixel-differential tests.
 Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `sh host/wayland-vm/vm.sh test`.
 
@@ -28,7 +28,7 @@ Owner-decided (from goal brief, 2026-10-30):
 
 Prescribed (code settles it, overrule with reason):
 - Reuse `renderer/OpenGL`, `Device` surfaceless EGL, `Target.exportDmabuf` + `readPixelsAlloc` verbatim; new code is only the Wayland present path. Renderer has zero GTK imports; only consumer is `gtk/class/render_surface.zig`.
-- Protocol set: `wl_compositor, wl_shm, xdg_wm_base, wl_seat, wl_data_device_manager, wp_viewporter, wp_fractional_scale`. `zwp_linux_dmabuf_v1` and xdg-activation are not bound. Drop kde/vicinae/slide/layer-shell and text-input-v3 IME.
+- Protocol set: `wl_compositor, wl_shm, xdg_wm_base, wl_seat, wl_data_device_manager, wp_viewporter, wp_fractional_scale`. `zwp_linux_dmabuf_v1` and xdg-activation are not bound. Drop kde/vicinae/slide/layer-shell.
 - QEMU harness merges `.github/scripts/freebsd-vm/vm.sh` lifecycle with `~/usr/host/alpine/tests/vm.sh` serial/monitor helpers; native x86_64 Alpine + `cage`, pixman, KVM, `-display none`, `screendump` oracle.
 - Loop: narrowest suite per slice; full suite only at M1/M2/close.
 
