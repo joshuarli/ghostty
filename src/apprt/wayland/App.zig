@@ -79,6 +79,9 @@ pub fn run(self: *App) !void {
         conn.disconnect();
     };
     self.conn = conn;
+    errdefer {
+        if (self.conn == conn) self.conn = null;
+    }
 
     self.running = true;
     self.newWindow() catch |err| {
