@@ -178,12 +178,13 @@ answer_setup() {
 }
 provision() {
 	must 'mkdir -p /media/share && mount -t vfat -o ro /dev/vdb1 /media/share'
-	must 'apk update && apk add -q cage foot mesa-dri-gallium mesa-egl ttf-dejavu openssh libxkbcommon fontconfig' 600
+	must 'apk update && apk add -q cage foot mesa-dri-gallium mesa-egl ttf-dejavu openssh libxkbcommon fontconfig seatd' 600
 	must 'cp /media/share/ghostty-wayland /usr/local/bin/ && chmod +x /usr/local/bin/ghostty-wayland && mkdir -p /root/.config/ghostty && cp /media/share/config /root/.config/ghostty/config'
 	must 'mkdir -p /root/.ssh && cp /media/share/id_ed25519.pub /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys'
 	must "sed -i 's|^tty1::.*|tty1::respawn:/bin/login -f root|' /etc/inittab && kill -HUP 1"
 	must "printf '%s\n' 'export XDG_RUNTIME_DIR=/run' 'export WLR_RENDERER=pixman' 'export XKB_DEFAULT_LAYOUT=us' '[ \"\$(tty)\" = /dev/tty1 ] && exec cage -- /usr/local/bin/ghostty-wayland >/root/cage.log 2>&1' > /root/.profile"
 	must 'rc-update add sshd default && mkdir -p /run/sshd'
+	must 'rc-update add seatd default'
 }
 setup() {
 	clean_tree; find_qemu; fetch_iso
