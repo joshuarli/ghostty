@@ -20,8 +20,12 @@ zig build -Dapp-runtime=wayland -Drenderer=software \
   -Demit-themes=false -Di18n=false -Dcpu=baseline
 ```
 
-The aarch64 release job uses the same flags inside an aarch64 Alpine container,
-because the static `libxkbcommon.a` and host `/usr/include` must match the target.
+The release workflow publishes this build for x86_64 as its own artifact,
+`ghostty-custom-software-x86_64-linux-musl.tar.gz`, after running the Wayland and
+renderer tests and checking for zero `PT_INTERP` and `DT_NEEDED` entries. The
+build needs `libxkbcommon-static` and `libffi-dev` on Alpine. An aarch64 static
+artifact is not built yet: the static `libxkbcommon.a` and host `/usr/include`
+must match the target, so it needs a native aarch64 Alpine build.
 
 The executable has no `PT_INTERP` and no `DT_NEEDED` entries:
 
@@ -84,6 +88,13 @@ with one row of overhang on each side, and falls back to a full frame for:
 - Kitty images, overlays, or background images;
 - damage that spans more than 64 row runs.
 
+The target and the frames handed to the apprt are top-down. `Software.present`
+snapshots the target once, because the render thread keeps drawing into it, and
+`Window.presentMemory` writes into the shared-memory buffer from that snapshot.
+A buffer that the damage history can repair receives only the damaged
+rectangles; otherwise the whole frame is copied. The OpenGL profile's readback
+is bottom-up and is still flipped whole.
+
 The compositor receives damage from an eight-revision history ring. A stale
 recycled buffer receives the union of every missed revision. A gap older than
 the ring, or any missed full frame, sends a full-buffer damage rectangle.
@@ -98,9 +109,17 @@ the inspector GUI, EGL, OpenGL, Vulkan, GBM, libdrm, and shader compilers.
 
 The system clipboard is served through `wl_data_device`: text from other
 Wayland clients can be pasted and copies are advertised to the compositor.
-Only the standard clipboard is supported; primary selection is not. The profile
-does not implement text-input-v3 IME, so composition degrades to ordinary key
-events when absent.
+Only the standard clipboard is supported; primary selection is not.
+
+Keys repeat on the client from the compositor's `wl_keyboard.repeat_info`; a
+compositor that reports no rate gets no repeat. Keyboard focus follows
+`wl_keyboard` enter and leave only. The profile does not implement text-input-v3
+IME, so composition degrades to ordinary key events when absent.
+
+The OpenGL profile (`-Drenderer=opengl` with `-Dapp-runtime=wayland`) keeps
+Ghostty's GPU renderer and custom shaders but does not negotiate DMA-BUF with
+the compositor. It reports GPU presentation as unhealthy so frames are read
+back to CPU memory and presented through `wl_shm`; it is not a zero-copy path.
 
 The profile needs a Wayland compositor, fonts discoverable by Fontconfig,
 compose data when used, a shell, and a PTY device. Static linkage does not
@@ -124,7 +143,9 @@ and single latest-frame queue replace Monstar's separate raster scheduler.
 
 ## Verification
 
-Unit tests cover buffer growth, texture row updates, damage intersection,
+The Wayland apprt tests run with
+`zig build test -Dapp-runtime=wayland -Drenderer=software -Dtest-filter=wayland`.
+Unit tests cover key repeat timing, damage-only buffer repair, buffer growth, texture row updates, damage intersection,
 glyph placement, opaque and translucent compositing, incremental row repaint
 against a full repaint, and renderer damage detection. Runtime checks use a
 headless `cage`/pixman compositor and screenshot the real executable:
