@@ -113,8 +113,14 @@ Only the standard clipboard is supported; primary selection is not.
 
 Keys repeat on the client from the compositor's `wl_keyboard.repeat_info`; a
 compositor that reports no rate gets no repeat. Keyboard focus follows
-`wl_keyboard` enter and leave only. The profile does not implement text-input-v3
-IME, so composition degrades to ordinary key events when absent.
+`wl_keyboard` enter and leave only.
+
+Input methods use text-input-v3 when the compositor offers it. The client
+enables it while the keyboard holds focus, declares a terminal content type, and
+reports the cursor cell as the candidate window anchor. Preedit text is drawn at
+the cursor and committed text is sent as input with no key attached. Surrounding
+text and `delete_surrounding_text` are not supported. Without the protocol,
+composition degrades to ordinary key events.
 
 The OpenGL profile (`-Drenderer=opengl` with `-Dapp-runtime=wayland`) keeps
 Ghostty's GPU renderer and custom shaders but does not negotiate DMA-BUF with
