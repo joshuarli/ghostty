@@ -27,7 +27,7 @@ Owner-decided (from goal brief, 2026-10-30):
 
 Prescribed (code settles it, overrule with reason):
 - Reuse `renderer/OpenGL`, `Device` surfaceless EGL, `Target.exportDmabuf` + `readPixelsAlloc` verbatim; new code is only the Wayland present path. Renderer has zero GTK imports; only consumer is `gtk/class/render_surface.zig`.
-- Protocol set: `wl_compositor, xdg_wm_base, wl_seat, zwp_linux_dmabuf_v1, wp_viewporter/fractional-scale, xdg-activation`. Drop kde/vicinae/slide/layer-shell.
+- Protocol set: `wl_compositor, xdg_wm_base, wl_seat, wl_data_device_manager, zwp_linux_dmabuf_v1, wp_viewporter/fractional-scale, xdg-activation`. Drop kde/vicinae/slide/layer-shell and text-input-v3 IME.
 - QEMU harness merges `.github/scripts/freebsd-vm/vm.sh` lifecycle with `~/usr/host/alpine/tests/vm.sh` serial/monitor helpers; native x86_64 Alpine + `cage`, pixman, KVM, `-display none`, `screendump` oracle.
 - Loop: narrowest suite per slice; full suite only at M1/M2/close.
 
