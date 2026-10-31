@@ -39,7 +39,7 @@ say() { printf 'vm: %s\n' "$*"; }
 running() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
 clean_tree() { [ -z "$(git -C "$repo" status --porcelain)" ] || die "commit changes first; the VM provisions HEAD"; }
 guest_ssh() { ssh $ssh_opts root@127.0.0.1 "$@"; }
-monitor() { { printf '%s\n' "$1"; sleep 1; } | nc -U "$work/monitor.sock" >/dev/null; }
+monitor() { { printf '%s\n' "$1"; sleep 1; } | nc -U -q 1 "$work/monitor.sock" >/dev/null; }
 send() { printf '%s\r' "$1" >&3 || fail 'serial write failed'; }
 size() { echo $(($(wc -c < "$console"))); }
 since() { tail -c "+$(($1 + 1))" "$console"; }
