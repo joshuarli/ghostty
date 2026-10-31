@@ -84,10 +84,10 @@ with one row of overhang on each side, and falls back to a full frame for:
 - Kitty images, overlays, or background images;
 - damage that spans more than 64 row runs.
 
-The compositor receives damage only when a recycled buffer contains the
-immediately preceding revision. Otherwise it receives a full-buffer damage
-rectangle, which is conservative and correct. Empty damage frames are dropped
-without a commit.
+The compositor receives damage from an eight-revision history ring. A stale
+recycled buffer receives the union of every missed revision. A gap older than
+the ring, or any missed full frame, sends a full-buffer damage rectangle.
+Empty damage frames are dropped without a commit.
 
 ## Limits
 
