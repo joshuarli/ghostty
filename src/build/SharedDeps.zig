@@ -353,8 +353,12 @@ pub fn add(
         }
     }
 
+    // Shader compilers are only needed by GPU renderers and their tests.
+    const shader_compilers = step.kind == .@"test" or self.config.renderer != .software;
+
     // Glslang
-    if (b.lazyDependency("glslang", .{
+    if (shader_compilers) {
+        if (b.lazyDependency("glslang", .{
         .target = target,
         .optimize = optimize,
     })) |glslang_dep| {
@@ -372,10 +376,12 @@ pub fn add(
                 glslang_dep.artifact("glslang").getEmittedBin(),
             );
         }
+        }
     }
 
     // Spirv-cross
-    if (b.lazyDependency("spirv_cross", .{
+    if (shader_compilers) {
+        if (b.lazyDependency("spirv_cross", .{
         .target = target,
         .optimize = optimize,
     })) |spirv_cross_dep| {
@@ -391,6 +397,7 @@ pub fn add(
                 b.allocator,
                 spirv_cross_dep.artifact("spirv_cross").getEmittedBin(),
             );
+        }
         }
     }
 
@@ -508,8 +515,10 @@ pub fn add(
     }
 
     // Other dependencies, mostly pure Zig
-    if (b.lazyDependency("opengl", .{})) |dep| {
-        step.root_module.addImport("opengl", dep.module("opengl"));
+    if (self.config.renderer == .opengl) {
+        if (b.lazyDependency("opengl", .{})) |dep| {
+            step.root_module.addImport("opengl", dep.module("opengl"));
+        }
     }
     if (b.lazyDependency("vaxis", .{
         .target = target,
@@ -601,8 +610,9 @@ pub fn add(
         }
     }
 
-    // cimgui
-    if (b.lazyDependency("dcimgui", .{
+    // cimgui (terminal inspector only)
+    if (self.config.inspector) {
+        if (b.lazyDependency("dcimgui", .{
         .target = target,
         .optimize = optimize,
         .freetype = true,
@@ -618,6 +628,7 @@ pub fn add(
             b.allocator,
             dep.artifact("dcimgui").getEmittedBin(),
         );
+        }
     }
 
     // Fonts
@@ -661,22 +672,23 @@ pub fn add(
 
     // If we're building an exe then we have additional dependencies.
     if (step.kind != .lib) {
-        // We always statically compile glad
-        step.root_module.addIncludePath(b.path("vendor/glad/include/"));
-        step.root_module.addCSourceFile(.{
-            .file = b.path("vendor/glad/src/gl.c"),
-            .flags = &.{},
-        });
-
-        // Link EGL for GTK and Wayland runtimes.
-        if (self.config.app_runtime == .gtk or
-            self.config.app_runtime == .wayland)
-        {
+        // GLAD and EGL belong to the OpenGL renderer only. The software
+        // profile must not build or link a GL implementation.
+        if (self.config.renderer == .opengl) {
+            step.root_module.addIncludePath(b.path("vendor/glad/include/"));
             step.root_module.addCSourceFile(.{
-                .file = b.path("vendor/glad/src/glad_egl.c"),
+                .file = b.path("vendor/glad/src/gl.c"),
                 .flags = &.{},
             });
-            step.root_module.linkSystemLibrary("egl", dynamic_link_opts);
+            if (self.config.app_runtime == .gtk or
+                self.config.app_runtime == .wayland)
+            {
+                step.root_module.addCSourceFile(.{
+                    .file = b.path("vendor/glad/src/glad_egl.c"),
+                    .flags = &.{},
+                });
+                step.root_module.linkSystemLibrary("egl", dynamic_link_opts);
+            }
         }
 
         // When we're targeting flatpak we ALWAYS link GTK so we
@@ -720,8 +732,11 @@ fn addWayland(
     const target = step.root_module.resolved_target.?;
     const optimize = step.root_module.optimize.?;
 
-    step.root_module.linkSystemLibrary("wayland-client", dynamic_link_opts);
-    step.root_module.linkSystemLibrary("xkbcommon", dynamic_link_opts);
+    const link_opts: std.Build.Module.LinkSystemLibraryOptions =
+        if (self.config.renderer == .software and target.result.abi == .musl)
+            .{ .preferred_link_mode = .static }
+        else
+            dynamic_link_opts;
 
     try translate_c.addImportToModule(b, "xkbcommon", step.root_module, .{
         .source = .{ .includes = .{ .files = &.{
@@ -730,7 +745,6 @@ fn addWayland(
         } } },
         .target = target,
         .optimize = optimize,
-        .link_system_libs = &.{"xkbcommon"},
         .system_include_paths = &.{.{ .cwd_relative = "/usr/include" }},
     });
 
@@ -745,7 +759,27 @@ fn addWayland(
     const wayland_protocols_dep = wayland_protocols_dep_ orelse return;
     const zig_wayland_import = zig_wayland_import_ orelse return;
     const zig_wayland_dep = zig_wayland_dep_ orelse return;
-    _ = self;
+
+    if (self.config.renderer == .software and target.result.abi == .musl) {
+        // Alpine's wayland-static archive is built with GCC LTO, which lld
+        // cannot consume. Build the small client library from the same pinned
+        // Wayland source so the musl artifact has no dynamic wayland dependency.
+        const wayland_static = try self.buildStaticWayland(b, target, optimize, wayland_dep);
+        step.root_module.linkLibrary(wayland_static);
+        if (target.result.cpu.arch == builtin.cpu.arch and
+            target.result.os.tag == builtin.target.os.tag)
+        {
+            step.root_module.addObjectFile(.{ .cwd_relative = "/usr/lib/libxkbcommon.a" });
+            step.root_module.addObjectFile(.{ .cwd_relative = "/usr/lib/libffi.a" });
+        } else {
+            step.root_module.linkSystemLibrary("xkbcommon", link_opts);
+            step.root_module.linkSystemLibrary("ffi", link_opts);
+        }
+        step.root_module.linkSystemLibrary("m", link_opts);
+    } else {
+        step.root_module.linkSystemLibrary("wayland-client", link_opts);
+        step.root_module.linkSystemLibrary("xkbcommon", link_opts);
+    }
 
     const Scanner = zig_wayland_import.Scanner;
     const scanner = Scanner.create(zig_wayland_dep.builder, .{
@@ -776,6 +810,100 @@ fn addWayland(
     if (target.result.os.tag == .linux) {
         step.root_module.addIncludePath(b.path("src/apprt/wayland"));
     }
+}
+
+fn buildStaticWayland(
+    self: *const SharedDeps,
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.lang.Optimize,
+    wayland_dep: *std.Build.Dependency,
+) !*std.Build.Step.Compile {
+    _ = self;
+    var generated = b.addWriteFiles();
+    const config = generated.add("config.h",
+        \\#define HAVE_MEMFD_CREATE 1
+        \\#define HAVE_ACCEPT4 1
+        \\#define HAVE_BROKEN_MSG_CMSG_CLOEXEC 0
+        \\#define HAVE_XUCRED_CR_PID 0
+        \\
+    );
+    _ = config;
+    const version = generated.add("src/wayland-version.h",
+        \\#define WAYLAND_VERSION_MAJOR 1
+        \\#define WAYLAND_VERSION_MINOR 26
+        \\#define WAYLAND_VERSION_MICRO 0
+        \\#define WAYLAND_VERSION "1.26.0"
+        \\
+    );
+    _ = version;
+
+    const client_header = b.addSystemCommand(&.{ "wayland-scanner", "client-header" });
+    client_header.addFileArg(wayland_dep.path("protocol/wayland.xml"));
+    const client_header_out = client_header.addOutputFileArg("wayland-client-protocol.h");
+    _ = generated.addCopyFile(client_header_out, "src/wayland-client-protocol.h");
+
+    const protocol_c = b.addSystemCommand(&.{ "wayland-scanner", "public-code" });
+    protocol_c.addFileArg(wayland_dep.path("protocol/wayland.xml"));
+    const protocol_c_out = protocol_c.addOutputFileArg("wayland-protocol.c");
+
+    const source_names = [_][]const u8{
+        "wayland-util.h",
+        "wayland-os.h",
+        "wayland-private.h",
+        "wayland-client-core.h",
+        "wayland-client.h",
+    };
+    const header_paths: [source_names.len]std.Build.LazyPath = blk: {
+        var paths: [source_names.len]std.Build.LazyPath = undefined;
+        for (source_names, 0..) |name, i| {
+            paths[i] = generated.addCopyFile(
+                wayland_dep.path(b.fmt("src/{s}", .{name})),
+                b.fmt("src/{s}", .{name}),
+            );
+        }
+        break :blk paths;
+    };
+    _ = header_paths;
+
+    const source_files = [_][]const u8{
+        "wayland-client.c",
+        "connection.c",
+        "wayland-os.c",
+        "wayland-util.c",
+    };
+    const copied_sources: [source_files.len]std.Build.LazyPath = blk: {
+        var paths: [source_files.len]std.Build.LazyPath = undefined;
+        for (source_files, 0..) |name, i| {
+            paths[i] = generated.addCopyFile(
+                wayland_dep.path(b.fmt("src/{s}", .{name})),
+                b.fmt("src/{s}", .{name}),
+            );
+        }
+        break :blk paths;
+    };
+
+    const lib = b.addLibrary(.{
+        .name = "wayland-client",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+        .linkage = .static,
+    });
+    lib.root_module.addIncludePath(generated.getDirectory());
+    lib.root_module.addIncludePath(generated.getDirectory().path(b, "src"));
+    if (target.result.cpu.arch == builtin.cpu.arch and
+        target.result.os.tag == builtin.target.os.tag)
+    {
+        lib.root_module.addSystemIncludePath(.{ .cwd_relative = "/usr/include" });
+    }
+    lib.root_module.addCSourceFile(.{ .file = protocol_c_out, .flags = &.{} });
+    for (copied_sources) |file| {
+        lib.root_module.addCSourceFile(.{ .file = file, .flags = &.{} });
+    }
+    return lib;
 }
 
 /// Setup the dependencies for the GTK apprt build.

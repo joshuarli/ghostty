@@ -26,6 +26,14 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Ghostty
     });
     const install_step = b.addInstallArtifact(exe, .{});
 
+    // The minimal software musl profile is a fully static executable.
+    if (cfg.renderer == .software and
+        cfg.target.result.abi == .musl and
+        cfg.target.result.os.tag == .linux)
+    {
+        exe.linkage = .static;
+    }
+
     // Set PIE if requested
     if (cfg.pie) exe.pie = true;
 
