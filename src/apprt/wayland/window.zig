@@ -11,6 +11,14 @@ const Connection = @import("connection.zig").Connection;
 
 const log = std.log.scoped(.wayland);
 
+/// Three buffers let the compositor hold one frame while another is being
+/// written and a third is pending release. Storage is never resized while a
+/// buffer is busy; a released buffer of the wrong generation is discarded.
+const max_buffers = 3;
+const max_total_shm_bytes = 512 * 1024 * 1024;
+
+pub const DamageRect = @import("../../renderer/software/Damage.zig").Rect;
+
 pub const Window = struct {
     conn: *Connection,
     alloc: Allocator,
@@ -21,15 +29,10 @@ pub const Window = struct {
     viewport: ?*wp.Viewport,
     scale_num: u32,
     configured: bool,
+    /// Logical surface size in surface-local coordinates.
     width: u32,
     height: u32,
-    shm_fd: posix.fd_t,
-    shm_size: usize,
-    shm_data: []u8,
-    pool: ?*wl.ShmPool,
-    buffer: ?*wl.Buffer,
-    buf_width: u32,
-    buf_height: u32,
+    buffers: std.ArrayListUnmanaged(*BufferSlot) = .empty,
     frame_pending: bool,
     closed: bool,
 
@@ -68,13 +71,6 @@ pub const Window = struct {
             .configured = false,
             .width = 800,
             .height = 600,
-            .shm_fd = -1,
-            .shm_size = 0,
-            .shm_data = &.{},
-            .pool = null,
-            .buffer = null,
-            .buf_width = 0,
-            .buf_height = 0,
             .frame_pending = false,
             .closed = false,
         };
@@ -112,10 +108,8 @@ pub const Window = struct {
     }
 
     pub fn destroy(self: *Window) void {
-        if (self.buffer) |b| b.destroy();
-        if (self.pool) |p| p.destroy();
-        if (self.shm_data.len > 0) posix.munmap(@alignCast(self.shm_data));
-        if (self.shm_fd >= 0) _ = libc.close(self.shm_fd);
+        for (self.buffers.items) |slot| slot.destroy(self.alloc);
+        self.buffers.deinit(self.alloc);
         if (self.fractional) |f| f.destroy();
         if (self.viewport) |v| v.destroy();
         self.toplevel.destroy();
@@ -128,49 +122,134 @@ pub const Window = struct {
         return @as(f64, @floatFromInt(self.scale_num)) / 120.0;
     }
 
+    pub fn pixelWidth(self: *const Window) u32 {
+        const scaled = @as(f64, @floatFromInt(self.width)) * self.scale();
+        return @max(1, @as(u32, @intFromFloat(@round(scaled))));
+    }
+
+    pub fn pixelHeight(self: *const Window) u32 {
+        const scaled = @as(f64, @floatFromInt(self.height)) * self.scale();
+        return @max(1, @as(u32, @intFromFloat(@round(scaled))));
+    }
+
     pub fn presentMemory(
         self: *Window,
         pixels: []const u8,
         width: u32,
         height: u32,
+        damage: ?[]const DamageRect,
+        revision: u64,
     ) !void {
-        try self.ensureShm(width, height);
-        const stride: usize = @as(usize, width) * 4;
-        const src_stride = stride;
+        if (width == 0 or height == 0) return error.ZeroSize;
+        if (self.frame_pending) return error.FramePending;
+        const stride = std.math.mul(usize, width, 4) catch return error.ShmBufferTooLarge;
+        const expected = std.math.mul(usize, stride, height) catch return error.ShmBufferTooLarge;
+        if (pixels.len < expected) return error.ShortFrame;
+
+        const slot = try self.acquireSlot(width, height);
+        errdefer slot.busy = false;
+
         var row: u32 = 0;
         while (row < height) : (row += 1) {
-            const src_off = @as(usize, row) * src_stride;
+            const src_off = @as(usize, row) * stride;
             const dst_row = height - 1 - row;
             const dst_off = @as(usize, dst_row) * stride;
             @memcpy(
-                self.shm_data[dst_off .. dst_off + stride],
+                slot.data[dst_off .. dst_off + stride],
                 pixels[src_off .. src_off + stride],
             );
         }
-        self.surface.attach(self.buffer, 0, 0);
-        self.surface.damage(0, 0, @intCast(width), @intCast(height));
-        if (!self.frame_pending) {
-            const frame = try self.surface.frame();
-            frame.setListener(*Window, onFrameEvent, self);
-            self.frame_pending = true;
+
+        self.surface.attach(slot.buffer, 0, 0);
+        const incremental = if (slot.has_revision and slot.revision +% 1 == revision)
+            damage
+        else
+            null;
+        if (incremental) |rects| {
+            if (self.surface.getVersion() >= wl.Surface.damage_buffer_since_version) {
+                for (rects) |rect| {
+                    self.surface.damageBuffer(
+                        @intCast(rect.x),
+                        @intCast(rect.y),
+                        @intCast(rect.width),
+                        @intCast(rect.height),
+                    );
+                }
+            } else {
+                for (rects) |rect| {
+                    self.surface.damage(
+                        @intCast(rect.x),
+                        @intCast(rect.y),
+                        @intCast(rect.width),
+                        @intCast(rect.height),
+                    );
+                }
+            }
+        } else if (self.surface.getVersion() >= wl.Surface.damage_buffer_since_version) {
+            self.surface.damageBuffer(0, 0, @intCast(width), @intCast(height));
+        } else {
+            self.surface.damage(0, 0, @intCast(width), @intCast(height));
         }
+        const frame = try self.surface.frame();
+        frame.setListener(*Window, onFrameEvent, self);
+        self.frame_pending = true;
+        slot.busy = true;
+        slot.revision = revision;
+        slot.has_revision = true;
         self.surface.commit();
         self.conn.flush();
     }
 
-    fn ensureShm(self: *Window, width: u32, height: u32) !void {
-        if (self.buffer != null and
-            self.buf_width == width and self.buf_height == height) return;
-        if (self.buffer) |b| b.destroy();
-        self.buffer = null;
-        if (self.pool) |p| p.destroy();
-        self.pool = null;
-        if (self.shm_data.len > 0) posix.munmap(@alignCast(self.shm_data));
-        self.shm_data = &.{};
-        if (self.shm_fd >= 0) _ = libc.close(self.shm_fd);
+    fn acquireSlot(self: *Window, width: u32, height: u32) !*BufferSlot {
+        for (self.buffers.items) |slot| {
+            if (!slot.busy and slot.width == width and slot.height == height) return slot;
+        }
 
-        const stride: i32 = @intCast(width * 4);
-        const size: usize = @as(usize, height) * @as(usize, @intCast(stride));
+        if (self.buffers.items.len < max_buffers) {
+            const slot = try BufferSlot.create(self, width, height);
+            errdefer slot.destroy(self.alloc);
+            try self.buffers.append(self.alloc, slot);
+            return slot;
+        }
+
+        for (self.buffers.items, 0..) |slot, i| {
+            if (slot.busy) continue;
+            slot.destroy(self.alloc);
+            _ = self.buffers.swapRemove(i);
+            const new_slot = try BufferSlot.create(self, width, height);
+            errdefer new_slot.destroy(self.alloc);
+            try self.buffers.append(self.alloc, new_slot);
+            return new_slot;
+        }
+
+        return error.BufferBusy;
+    }
+};
+
+const BufferSlot = struct {
+    window: *Window,
+    buffer: *wl.Buffer,
+    pool: *wl.ShmPool,
+    fd: posix.fd_t,
+    data: []align(std.heap.page_size_min) u8,
+    width: u32,
+    height: u32,
+    busy: bool,
+    revision: u64 = 0,
+    has_revision: bool = false,
+
+    fn create(window: *Window, width: u32, height: u32) !*BufferSlot {
+        const alloc = window.alloc;
+        const stride = std.math.mul(usize, width, 4) catch return error.ShmBufferTooLarge;
+        const size = std.math.mul(usize, stride, height) catch return error.ShmBufferTooLarge;
+        if (stride > std.math.maxInt(i32) or size > std.math.maxInt(i32)) {
+            return error.ShmBufferTooLarge;
+        }
+        if (size > max_total_shm_bytes / max_buffers) return error.ShmBudgetExceeded;
+
+        const self = try alloc.create(BufferSlot);
+        errdefer alloc.destroy(self);
+
         const fd = try posix.memfd_create("ghostty-wayland-shm", 0);
         errdefer _ = libc.close(fd);
         if (libc.ftruncate(fd, @intCast(size)) != 0) return error.FtruncateFailed;
@@ -182,26 +261,52 @@ pub const Window = struct {
             fd,
             0,
         );
+        errdefer posix.munmap(data);
 
-        const shm = self.conn.globals.shm orelse return error.NoShm;
+        const shm = window.conn.globals.shm orelse return error.NoShm;
         const pool = try shm.createPool(fd, @intCast(size));
+        errdefer pool.destroy();
         const buffer = try pool.createBuffer(
             0,
             @intCast(width),
             @intCast(height),
-            stride,
-            wl.Shm.Format.argb8888,
+            @intCast(stride),
+            wl.Shm.Format.abgr8888,
         );
 
-        self.shm_fd = fd;
-        self.shm_size = size;
-        self.shm_data = data;
-        self.pool = pool;
-        self.buffer = buffer;
-        self.buf_width = width;
-        self.buf_height = height;
+        self.* = .{
+            .window = window,
+            .buffer = buffer,
+            .pool = pool,
+            .fd = fd,
+            .data = data,
+            .width = width,
+            .height = height,
+            .busy = false,
+        };
+        buffer.setListener(*BufferSlot, onBufferRelease, self);
+        return self;
+    }
+
+    fn destroy(self: *BufferSlot, alloc: Allocator) void {
+        self.buffer.destroy();
+        self.pool.destroy();
+        posix.munmap(self.data);
+        _ = libc.close(self.fd);
+        alloc.destroy(self);
     }
 };
+
+fn onBufferRelease(
+    buffer: *wl.Buffer,
+    event: wl.Buffer.Event,
+    slot: *BufferSlot,
+) void {
+    _ = buffer;
+    switch (event) {
+        .release => slot.busy = false,
+    }
+}
 
 fn onXdgSurfaceEvent(
     xdg_surface: *xdg.Surface,
@@ -256,4 +361,13 @@ fn onFractionalEvent(
             if (s.scale > 0) win.scale_num = s.scale;
         },
     }
+}
+
+test "physical pixels follow the fractional scale numerator" {
+    var win: Window = undefined;
+    win.scale_num = 180;
+    win.width = 100;
+    win.height = 50;
+    try std.testing.expectEqual(@as(u32, 150), win.pixelWidth());
+    try std.testing.expectEqual(@as(u32, 75), win.pixelHeight());
 }

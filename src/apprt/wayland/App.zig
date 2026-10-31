@@ -88,7 +88,7 @@ pub fn run(self: *App) !void {
         return err;
     };
     while (self.running) {
-        try conn.wait(frame_poll_ms);
+        try conn.wait(-1);
         try self.core_app.tick(self);
         if (self.surface) |s| {
             s.present();
@@ -102,10 +102,6 @@ pub fn run(self: *App) !void {
         conn.flush();
     }
 }
-
-/// The renderer publishes frames without notifying the apprt, so the
-/// loop wakes at least this often to collect them.
-const frame_poll_ms = 8;
 
 fn newWindow(self: *App) !void {
     const alloc = self.core_app.alloc;
@@ -148,6 +144,10 @@ pub fn performAction(
                 return true;
             }
             return false;
+        },
+        .render => {
+            if (self.conn) |c| c.wake();
+            return true;
         },
         else => {
             log.debug("unhandled action {}", .{action});
