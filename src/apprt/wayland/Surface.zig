@@ -324,6 +324,7 @@ fn presentFrame(self: *Surface, frame: renderer.Renderer.ExportedFrame) !void {
                     mem.pixels,
                     mem.width,
                     mem.height,
+                    .top_down,
                     mem.damage,
                     mem.revision,
                 );

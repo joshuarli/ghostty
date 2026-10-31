@@ -21,6 +21,8 @@ const max_damage_rects = 64;
 
 pub const DamageRect = @import("../../renderer/software/Damage.zig").Rect;
 
+pub const RowOrder = enum { top_down, bottom_up };
+
 const DamageEntry = struct {
     revision: u64 = 0,
     full: bool = true,
@@ -150,6 +152,7 @@ pub const Window = struct {
         pixels: []const u8,
         width: u32,
         height: u32,
+        row_order: RowOrder,
         damage: ?[]const DamageRect,
         revision: u64,
     ) !void {
@@ -162,19 +165,11 @@ pub const Window = struct {
         const slot = try self.acquireSlot(width, height);
         errdefer slot.busy = false;
 
-        var row: u32 = 0;
-        while (row < height) : (row += 1) {
-            const src_off = @as(usize, row) * stride;
-            const dst_row = height - 1 - row;
-            const dst_off = @as(usize, dst_row) * stride;
-            @memcpy(
-                slot.data[dst_off .. dst_off + stride],
-                pixels[src_off .. src_off + stride],
-            );
-        }
+        const incremental = self.incrementalDamage(slot, revision, damage);
+        errdefer slot.has_revision = false;
+        copyFrame(slot.data[0..expected], pixels[0..expected], width, height, row_order, incremental);
 
         self.surface.attach(slot.buffer, 0, 0);
-        const incremental = self.incrementalDamage(slot, revision, damage);
         if (incremental) |rects| {
             if (self.surface.getVersion() >= wl.Surface.damage_buffer_since_version) {
                 for (rects) |rect| {
@@ -294,6 +289,41 @@ pub const Window = struct {
         return error.BufferBusy;
     }
 };
+
+/// Write `src` into the shared buffer `dst`. `repair` names the only regions
+/// that differ from what `dst` already holds; null means all of it. Bottom-up
+/// sources are flipped and always copied whole.
+fn copyFrame(
+    dst: []u8,
+    src: []const u8,
+    width: u32,
+    height: u32,
+    row_order: RowOrder,
+    repair: ?[]const DamageRect,
+) void {
+    const stride = @as(usize, width) * 4;
+    switch (row_order) {
+        .bottom_up => {
+            var row: usize = 0;
+            while (row < height) : (row += 1) {
+                const dst_off = (height - 1 - row) * stride;
+                @memcpy(dst[dst_off..][0..stride], src[row * stride ..][0..stride]);
+            }
+        },
+        .top_down => {
+            const rects = repair orelse return @memcpy(dst, src);
+            for (rects) |rect| {
+                const clipped = rect.clipped(width, height) orelse continue;
+                const row_bytes = @as(usize, clipped.width) * 4;
+                var row: usize = clipped.y;
+                while (row < clipped.bottom()) : (row += 1) {
+                    const off = row * stride + @as(usize, clipped.x) * 4;
+                    @memcpy(dst[off..][0..row_bytes], src[off..][0..row_bytes]);
+                }
+            }
+        },
+    }
+}
 
 const BufferSlot = struct {
     window: *Window,
@@ -464,4 +494,33 @@ test "damage history unions missed revisions and rejects stale buffers" {
 
     slot.revision = 0;
     try std.testing.expect(win.incrementalDamage(&slot, 10, &current) == null);
+}
+
+test "top-down repair copies only the damaged rectangle" {
+    var dst: [48]u8 = @splat(0);
+    var src: [dst.len]u8 = undefined;
+    @memset(&src, 7);
+    const damage = [_]DamageRect{.{ .x = 1, .y = 1, .width = 2, .height = 1 }};
+    copyFrame(&dst, &src, 4, 3, .top_down, &damage);
+
+    for (dst, 0..) |byte, i| {
+        const pixel = i / 4;
+        const inside = pixel == 5 or pixel == 6;
+        try std.testing.expectEqual(@as(u8, if (inside) 7 else 0), byte);
+    }
+}
+
+test "top-down without repair regions copies the whole frame" {
+    var dst: [16]u8 = @splat(0);
+    var src: [16]u8 = undefined;
+    for (&src, 0..) |*byte, i| byte.* = @intCast(i);
+    copyFrame(&dst, &src, 2, 2, .top_down, null);
+    try std.testing.expectEqualSlices(u8, &src, &dst);
+}
+
+test "bottom-up source is flipped into top-down rows" {
+    var dst: [16]u8 = @splat(0);
+    const src = [_]u8{ 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4 };
+    copyFrame(&dst, &src, 2, 2, .bottom_up, null);
+    try std.testing.expectEqualSlices(u8, &.{ 3, 3, 3, 3, 4, 4, 4, 4, 1, 1, 1, 1, 2, 2, 2, 2 }, &dst);
 }
