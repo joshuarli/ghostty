@@ -163,10 +163,9 @@ transcribed from the GLSL shaders and the blend state they run under. It renders
 whole scenes and compares them with the rasterizer pixel by pixel, in native,
 linear, and linear-corrected blending, within a few levels of 8-bit rounding.
 Scenes cover translucent text and backgrounds, combining marks, box drawing,
-wide glyphs with a wide cursor, color glyphs, minimum contrast, and Kitty images
-at fractional offsets. It shares no code with `raster.zig`, so a mismatch means
-the rasterizer drifted from the shaders. Background images have no reference
-scene yet. Runtime checks use a
+wide glyphs with a wide cursor, color glyphs, minimum contrast, Kitty images at
+fractional offsets, and background images in every fit, position, and repeat mode. It shares no code with `raster.zig`, so a mismatch means
+the rasterizer drifted from the shaders. Runtime checks use a
 headless `cage`/pixman compositor and screenshot the real executable:
 
 ```sh

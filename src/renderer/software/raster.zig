@@ -135,17 +135,6 @@ fn blendColor(dst: Pixel, color: [4]u8, linear: bool, opacity: u8) Pixel {
     ));
 }
 
-fn backgroundColor(u: *const Uniforms, linear: bool) [4]u8 {
-    const c = u.bg_color;
-    if (!linear) return c;
-    const rgb = encodeLinear(
-        @as(u32, linear8[c[0]]) * c[3] / 255,
-        @as(u32, linear8[c[1]]) * c[3] / 255,
-        @as(u32, linear8[c[2]]) * c[3] / 255,
-    );
-    return .{ rgb[0], rgb[1], rgb[2], c[3] };
-}
-
 fn damageRow(damage: Damage, y: u32, width: u32) bool {
     return damage.intersects(0, y, width, 1);
 }
@@ -673,10 +662,19 @@ pub fn drawBgImage(
     };
     const scale_x = tex_w / dest_w;
     const scale_y = tex_h / dest_h;
-    const bg = backgroundColor(u, u.bools.use_linear_blending);
+    const bg = u.bg_color;
+    const linear = u.bools.use_linear_blending;
+    const bg_lin: [3]f32 = if (linear) .{
+        @as(f32, @floatFromInt(linear8[bg[0]])) / 65535.0,
+        @as(f32, @floatFromInt(linear8[bg[1]])) / 65535.0,
+        @as(f32, @floatFromInt(linear8[bg[2]])) / 65535.0,
+    } else .{
+        @as(f32, @floatFromInt(bg[0])) / 255.0,
+        @as(f32, @floatFromInt(bg[1])) / 255.0,
+        @as(f32, @floatFromInt(bg[2])) / 255.0,
+    };
     const bg_a = @as(f32, @floatFromInt(bg[3])) / 255.0;
     const opacity = @min(info.opacity, if (bg_a > 0) 1.0 / bg_a else 1.0);
-    const linear = u.bools.use_linear_blending;
 
     var y: u32 = 0;
     while (y < target.height) : (y += 1) {
@@ -709,35 +707,26 @@ pub fn drawBgImage(
             rgb[1] *= opacity;
             rgb[2] *= opacity;
             a *= opacity;
-            const bg_lin = if (linear) [3]f32{
-                toLinear(@as(f32, @floatFromInt(bg[0])) / 255.0),
-                toLinear(@as(f32, @floatFromInt(bg[1])) / 255.0),
-                toLinear(@as(f32, @floatFromInt(bg[2])) / 255.0),
-            } else [3]f32{
-                @as(f32, @floatFromInt(bg[0])) / 255.0,
-                @as(f32, @floatFromInt(bg[1])) / 255.0,
-                @as(f32, @floatFromInt(bg[2])) / 255.0,
-            };
             rgb[0] += bg_lin[0] * (1 - a);
             rgb[1] += bg_lin[1] * (1 - a);
             rgb[2] += bg_lin[2] * (1 - a);
-            a = 1 - (1 - a) * (1 - bg_a);
+            a = bg_a;
             rgb[0] *= bg_a;
             rgb[1] *= bg_a;
             rgb[2] *= bg_a;
             const dst = &target.pixels[@as(usize, y) * target.width + x];
             if (linear) {
                 dst.* = blendLinear(dst.*, .{
-                    @intFromFloat(rgb[0] * 65535),
-                    @intFromFloat(rgb[1] * 65535),
-                    @intFromFloat(rgb[2] * 65535),
-                }, @intFromFloat(a * 255));
+                    @intFromFloat(@round(rgb[0] * 65535)),
+                    @intFromFloat(@round(rgb[1] * 65535)),
+                    @intFromFloat(@round(rgb[2] * 65535)),
+                }, @intFromFloat(@round(a * 255)));
             } else {
                 dst.* = blendEncoded(dst.*, rgba(
-                    @intFromFloat(rgb[0] * 255),
-                    @intFromFloat(rgb[1] * 255),
-                    @intFromFloat(rgb[2] * 255),
-                    @intFromFloat(a * 255),
+                    @intFromFloat(@round(rgb[0] * 255)),
+                    @intFromFloat(@round(rgb[1] * 255)),
+                    @intFromFloat(@round(rgb[2] * 255)),
+                    @intFromFloat(@round(a * 255)),
                 ));
             }
         }
