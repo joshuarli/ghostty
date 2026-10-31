@@ -7,11 +7,14 @@ const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const xdg = wayland.client.xdg;
 const wp = wayland.client.wp;
+const zwp = wayland.client.zwp;
 
 const seat_mod = @import("seat.zig");
 const Seat = seat_mod.Seat;
 const SeatEvents = seat_mod.SeatEvents;
 const Clipboard = @import("clipboard.zig").Clipboard;
+const text_input = @import("text_input.zig");
+const TextInput = text_input.TextInput;
 
 const log = std.log.scoped(.wayland);
 
@@ -25,6 +28,8 @@ pub const Globals = struct {
     data_device_manager_name: ?u32 = null,
     fractional_manager: ?*wp.FractionalScaleManagerV1 = null,
     viewporter: ?*wp.Viewporter = null,
+    text_input_manager: ?*zwp.TextInputManagerV3 = null,
+    text_input_manager_name: ?u32 = null,
 
     pub fn deinit(self: *Globals) void {
         _ = self;
@@ -42,11 +47,18 @@ pub const Connection = struct {
     seat: ?*Seat,
     seat_events: SeatEvents,
     clipboard: ?Clipboard = null,
+    ime: ?*TextInput = null,
+    ime_events: text_input.ImeEvents,
     poll_fds: std.ArrayListUnmanaged(posix.pollfd) = .empty,
     wake_fd: posix.fd_t,
     alloc: Allocator,
 
-    pub fn connect(self: *Connection, alloc: Allocator, seat_events: SeatEvents) !void {
+    pub fn connect(
+        self: *Connection,
+        alloc: Allocator,
+        seat_events: SeatEvents,
+        ime_events: text_input.ImeEvents,
+    ) !void {
         {
             const display = try wl.Display.connect(null);
             errdefer display.disconnect();
@@ -60,6 +72,7 @@ pub const Connection = struct {
                 .globals = .{},
                 .seat = null,
                 .seat_events = seat_events,
+                .ime_events = ime_events,
                 .wake_fd = wake_fd,
                 .alloc = alloc,
             };
@@ -74,6 +87,7 @@ pub const Connection = struct {
     }
 
     pub fn disconnect(self: *Connection) void {
+        self.deinitTextInput();
         if (self.clipboard) |*clipboard| {
             clipboard.deinit();
             self.clipboard = null;
@@ -83,6 +97,7 @@ pub const Connection = struct {
         if (self.globals.wm_base) |v| v.destroy();
         if (self.globals.seat) |v| v.release();
         if (self.globals.data_device_manager) |v| v.destroy();
+        if (self.globals.text_input_manager) |v| v.destroy();
         if (self.globals.shm) |v| v.destroy();
         if (self.globals.compositor) |v| v.destroy();
         if (self.globals.fractional_manager) |v| v.destroy();
@@ -164,6 +179,23 @@ pub const Connection = struct {
         return if (self.seat) |seat| seat.last_serial else 0;
     }
 
+    pub fn refreshInputMethod(self: *Connection) void {
+        if (self.ime) |ime| ime.refreshCursorRect();
+    }
+
+    fn deinitTextInput(self: *Connection) void {
+        const ime = self.ime orelse return;
+        self.ime = null;
+        ime.destroy();
+    }
+
+    fn initTextInput(self: *Connection) !void {
+        if (self.ime != null) return;
+        const manager = self.globals.text_input_manager orelse return;
+        const seat = self.globals.seat orelse return;
+        self.ime = try TextInput.create(self.alloc, manager, seat, self.ime_events);
+    }
+
     fn initClipboard(self: *Connection) !void {
         if (self.clipboard != null) return;
         const manager = self.globals.data_device_manager orelse return;
@@ -201,6 +233,7 @@ fn onRegistryEvent(
         },
         .global_remove => |g| {
             if (conn.globals.seat_name == @as(?u32, g.name)) {
+                conn.deinitTextInput();
                 if (conn.clipboard) |*clipboard| {
                     clipboard.deinit();
                     conn.clipboard = null;
@@ -214,6 +247,14 @@ fn onRegistryEvent(
                     conn.globals.seat = null;
                 }
                 conn.globals.seat_name = null;
+            }
+            if (conn.globals.text_input_manager_name == @as(?u32, g.name)) {
+                conn.deinitTextInput();
+                if (conn.globals.text_input_manager) |v| {
+                    v.destroy();
+                    conn.globals.text_input_manager = null;
+                }
+                conn.globals.text_input_manager_name = null;
             }
             if (conn.globals.data_device_manager_name == @as(?u32, g.name)) {
                 if (conn.clipboard) |*clipboard| {
@@ -264,6 +305,7 @@ fn bindGlobal(
         conn.globals.seat_name = name;
         conn.seat = try Seat.init(conn.alloc, wl_seat, conn.seat_events);
         try conn.initClipboard();
+        try conn.initTextInput();
     } else if (std.mem.eql(u8, span, "wl_data_device_manager")) {
         if (conn.globals.data_device_manager != null) return;
         conn.globals.data_device_manager = try registry.bind(
@@ -280,6 +322,15 @@ fn bindGlobal(
             wp.FractionalScaleManagerV1,
             @min(version, 1),
         );
+    } else if (std.mem.eql(u8, span, "zwp_text_input_manager_v3")) {
+        if (conn.globals.text_input_manager != null) return;
+        conn.globals.text_input_manager = try registry.bind(
+            name,
+            zwp.TextInputManagerV3,
+            @min(version, 1),
+        );
+        conn.globals.text_input_manager_name = name;
+        try conn.initTextInput();
     } else if (std.mem.eql(u8, span, "wp_viewporter")) {
         if (conn.globals.viewporter != null) return;
         conn.globals.viewporter = try registry.bind(

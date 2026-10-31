@@ -6,6 +6,7 @@ const renderer = @import("../../renderer.zig");
 const global = @import("../../global.zig");
 const input = @import("../../input.zig");
 const Window = @import("window.zig").Window;
+const text_input = @import("text_input.zig");
 
 const log = std.log.scoped(.wayland);
 
@@ -199,6 +200,40 @@ pub fn handleKey(self: *Surface, event: input.KeyEvent) bool {
         .closed => true,
         .ignored => false,
         .consumed => true,
+    };
+}
+
+pub fn handlePreedit(self: *Surface, text: ?[]const u8) void {
+    self.core_surface.preeditCallback(text) catch |err| {
+        log.warn("preedit failed err={}", .{err});
+    };
+}
+
+pub fn handleCommit(self: *Surface, text: []const u8) void {
+    self.core_surface.preeditCallback(null) catch |err| {
+        log.warn("preedit clear failed err={}", .{err});
+    };
+    _ = self.core_surface.keyCallback(.{
+        .action = .press,
+        .key = .unidentified,
+        .mods = .{},
+        .consumed_mods = .{},
+        .composing = false,
+        .utf8 = text,
+    }) catch |err| {
+        log.warn("commit failed err={}", .{err});
+    };
+}
+
+pub fn imeCursorRect(self: *Surface) text_input.Rect {
+    const point = self.core_surface.imePoint();
+    const top = @floor(point.y - point.height);
+    const bottom = @ceil(point.y);
+    return .{
+        .x = @intFromFloat(@floor(point.x)),
+        .y = @intFromFloat(top),
+        .width = 1,
+        .height = @intFromFloat(@max(1, bottom - top)),
     };
 }
 

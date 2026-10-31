@@ -7,6 +7,7 @@ const Config = configpkg.Config;
 const input = @import("../../input.zig");
 const Surface = @import("Surface.zig");
 const Connection = @import("connection.zig").Connection;
+const text_input = @import("text_input.zig");
 
 const log = std.log.scoped(.wayland);
 
@@ -71,6 +72,7 @@ pub fn run(self: *App) !void {
     while (self.running) {
         try conn.wait(-1);
         try self.core_app.tick(self);
+        conn.refreshInputMethod();
         if (self.surface) |s| {
             s.present();
             if (s.window) |w| {
@@ -99,6 +101,11 @@ fn connect(self: *App) !void {
         .cursor_ud = self,
         .focus_fn = onFocus,
         .focus_ud = self,
+    }, .{
+        .preedit_fn = onPreedit,
+        .commit_fn = onCommit,
+        .cursor_rect_fn = onImeCursorRect,
+        .ud = self,
     });
     self.conn = conn;
 }
@@ -215,4 +222,22 @@ fn onFocus(ud: ?*anyopaque, focused: bool) void {
     self.core_app.focusEvent(focused);
     const s = self.surface orelse return;
     s.handleFocus(focused);
+}
+
+fn onPreedit(ud: ?*anyopaque, text: ?[]const u8) void {
+    const self: *App = @ptrCast(@alignCast(ud orelse return));
+    const s = self.surface orelse return;
+    s.handlePreedit(text);
+}
+
+fn onCommit(ud: ?*anyopaque, text: []const u8) void {
+    const self: *App = @ptrCast(@alignCast(ud orelse return));
+    const s = self.surface orelse return;
+    s.handleCommit(text);
+}
+
+fn onImeCursorRect(ud: ?*anyopaque) ?text_input.Rect {
+    const self: *App = @ptrCast(@alignCast(ud orelse return null));
+    const s = self.surface orelse return null;
+    return s.imeCursorRect();
 }
