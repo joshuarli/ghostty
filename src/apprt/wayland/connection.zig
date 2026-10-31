@@ -21,6 +21,7 @@ const log = std.log.scoped(.wayland);
 pub const Globals = struct {
     compositor: ?*wl.Compositor = null,
     shm: ?*wl.Shm = null,
+    shm_abgr8888: bool = false,
     wm_base: ?*xdg.WmBase = null,
     seat: ?*wl.Seat = null,
     seat_name: ?u32 = null,
@@ -83,6 +84,7 @@ pub const Connection = struct {
         try roundtrip(self);
         if (self.globals.compositor == null) return error.NoCompositor;
         if (self.globals.shm == null) return error.NoShm;
+        if (!self.globals.shm_abgr8888) return error.NoShmAbgr8888;
         if (self.globals.wm_base == null) return error.NoXdgWmBase;
     }
 
@@ -288,7 +290,9 @@ fn bindGlobal(
         );
     } else if (std.mem.eql(u8, span, "wl_shm")) {
         if (conn.globals.shm != null) return;
-        conn.globals.shm = try registry.bind(name, wl.Shm, @min(version, 1));
+        const shm = try registry.bind(name, wl.Shm, @min(version, 1));
+        shm.setListener(*Globals, onShmEvent, &conn.globals);
+        conn.globals.shm = shm;
     } else if (std.mem.eql(u8, span, "xdg_wm_base")) {
         if (conn.globals.wm_base != null) return;
         const wm: *xdg.WmBase = try registry.bind(
@@ -338,6 +342,14 @@ fn bindGlobal(
             wp.Viewporter,
             @min(version, 1),
         );
+    }
+}
+
+fn onShmEvent(_: *wl.Shm, event: wl.Shm.Event, globals: *Globals) void {
+    switch (event) {
+        .format => |f| if (f.format == .abgr8888) {
+            globals.shm_abgr8888 = true;
+        },
     }
 }
 
