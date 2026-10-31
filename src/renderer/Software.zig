@@ -72,8 +72,7 @@ pub const ExportedFrame = union(enum) {
         }
     };
 
-    /// RGBA8, premultiplied, sRGB encoded, bottom-up rows, tightly packed.
-    /// This matches the OpenGL readback contract consumed by wl_shm.
+    /// RGBA8, premultiplied, sRGB encoded, top-down rows, tightly packed.
     pub const Memory = struct {
         width: u32,
         height: u32,
@@ -290,7 +289,8 @@ pub fn present(
     presentation_health: rendererpkg.Health,
 ) !ExportedFrame {
     _ = presentation_health;
-    const pixels = try self.alloc.alloc(u8, @as(usize, target.width) * target.height * 4);
+    const pixel_count = @as(usize, target.width) * target.height;
+    const pixels = try self.alloc.dupe(u8, std.mem.sliceAsBytes(target.pixels[0..pixel_count]));
     errdefer self.alloc.free(pixels);
 
     const damage: ?[]DamageRect = switch (self.current_damage) {
@@ -298,14 +298,6 @@ pub fn present(
         .rects => |rects| if (rects.len == 0) null else self.alloc.dupe(DamageRect, rects) catch null,
     };
     errdefer if (damage) |rects| self.alloc.free(rects);
-
-    const stride = @as(usize, target.width) * 4;
-    var row: u32 = 0;
-    while (row < target.height) : (row += 1) {
-        const src_row = target.height - 1 - row;
-        const src = std.mem.sliceAsBytes(target.pixels[@as(usize, src_row) * target.width ..][0..target.width]);
-        @memcpy(pixels[@as(usize, row) * stride ..][0..stride], src);
-    }
 
     target.state.content_valid = true;
     target.state.revision +%= 1;
