@@ -19,6 +19,7 @@ size: apprt.SurfaceSize,
 content_scale: apprt.ContentScale,
 cursor_pos: apprt.CursorPos,
 clipboard_text: ?[]u8,
+pending_frame: ?renderer.Renderer.ExportedFrame,
 
 pub fn init(self: *Surface, app: *ApprtApp) !void {
     self.* = .{
@@ -30,6 +31,7 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
         .content_scale = .{ .x = 1, .y = 1 },
         .cursor_pos = .{ .x = -1, .y = -1 },
         .clipboard_text = null,
+        .pending_frame = null,
     };
     try app.core_app.addSurface(self);
     errdefer app.core_app.deleteSurface(self);
@@ -43,7 +45,7 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
         );
         errdefer win.destroy();
         self.window = win;
-        self.size = .{ .width = win.width, .height = win.height };
+        self.size = .{ .width = win.pixelWidth(), .height = win.pixelHeight() };
     }
 
     var config = try apprt.surface.newConfig(
@@ -62,11 +64,13 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
     );
     self.core_surface.reportPresentationHealth(.unhealthy);
     if (self.window) |win| {
-        self.updateSize(win.width, win.height);
+        self.updateSize(win.pixelWidth(), win.pixelHeight());
     }
 }
 
 pub fn deinit(self: *Surface) void {
+    if (self.pending_frame) |frame| frame.deinit();
+    self.pending_frame = null;
     if (self.title) |v| self.app.core_app.alloc.free(v);
     self.title = null;
     if (self.clipboard_text) |v| self.app.core_app.alloc.free(v);
@@ -270,8 +274,11 @@ pub fn present(self: *Surface) void {
         self.app.running = false;
         return;
     }
-    if (win.width != self.size.width or win.height != self.size.height) {
-        self.updateSize(win.width, win.height);
+    if (win.pixelWidth() != self.size.width or win.pixelHeight() != self.size.height) {
+        self.updateSize(win.pixelWidth(), win.pixelHeight());
+    }
+    if (win.viewport) |vp| {
+        vp.setDestination(@intCast(win.width), @intCast(win.height));
     }
     const s: f64 = win.scale();
     if (@abs(s - self.content_scale.x) > 0.001) {
@@ -279,25 +286,58 @@ pub fn present(self: *Surface) void {
         self.core_surface.contentScaleCallback(self.content_scale) catch |err| {
             log.warn("content scale failed err={}", .{err});
         };
-        if (win.viewport) |vp| {
-            vp.setDestination(
-                @intCast(self.size.width),
-                @intCast(self.size.height),
-            );
-        }
     }
+
+    if (self.pending_frame) |frame| {
+        self.presentFrame(frame) catch |err| switch (err) {
+            error.FramePending, error.BufferBusy => return,
+            else => {
+                log.warn("shm present failed err={}", .{err});
+                frame.deinit();
+                self.pending_frame = null;
+                return;
+            },
+        };
+        frame.deinit();
+        self.pending_frame = null;
+    }
+
     const frame = self.core_surface.renderer.takeFrame() orelse return;
-    defer frame.deinit();
+    self.presentFrame(frame) catch |err| switch (err) {
+        error.FramePending, error.BufferBusy => {
+            self.pending_frame = frame;
+            return;
+        },
+        else => {
+            log.warn("shm present failed err={}", .{err});
+            frame.deinit();
+            return;
+        },
+    };
+    frame.deinit();
+}
+
+fn presentFrame(self: *Surface, frame: renderer.Renderer.ExportedFrame) !void {
+    const win = self.window orelse return error.NoWindow;
     switch (frame) {
         .memory => |mem| {
-            win.presentMemory(mem.pixels, mem.width, mem.height) catch |err| {
-                log.warn("shm present failed err={}", .{err});
-            };
+            if (comptime @hasField(@TypeOf(mem), "damage")) {
+                try win.presentMemory(
+                    mem.pixels,
+                    mem.width,
+                    mem.height,
+                    mem.damage,
+                    mem.revision,
+                );
+            } else {
+                try win.presentMemory(mem.pixels, mem.width, mem.height, null, 0);
+            }
         },
         .dmabuf => |dm| {
             var m = dm;
             m.deinit();
             self.core_surface.reportPresentationHealth(.unhealthy);
+            return error.UnsupportedFrame;
         },
     }
 }

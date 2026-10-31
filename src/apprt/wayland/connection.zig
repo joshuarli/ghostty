@@ -19,6 +19,7 @@ pub const Globals = struct {
     shm: ?*wl.Shm = null,
     wm_base: ?*xdg.WmBase = null,
     seat: ?*wl.Seat = null,
+    seat_name: ?u32 = null,
     fractional_manager: ?*wp.FractionalScaleManagerV1 = null,
     viewporter: ?*wp.Viewporter = null,
 
@@ -143,7 +144,19 @@ fn onRegistryEvent(
                 log.warn("bind {s} failed err={}", .{ g.interface, err });
             };
         },
-        .global_remove => {},
+        .global_remove => |g| {
+            if (conn.globals.seat_name == @as(?u32, g.name)) {
+                if (conn.seat) |st| {
+                    st.deinit();
+                    conn.seat = null;
+                }
+                if (conn.globals.seat) |v| {
+                    v.release();
+                    conn.globals.seat = null;
+                }
+                conn.globals.seat_name = null;
+            }
+        },
     }
 }
 
@@ -178,6 +191,7 @@ fn bindGlobal(
         if (conn.globals.seat != null) return;
         const wl_seat: *wl.Seat = try registry.bind(name, wl.Seat, @min(version, 9));
         conn.globals.seat = wl_seat;
+        conn.globals.seat_name = name;
         conn.seat = try Seat.init(conn.alloc, wl_seat, conn.seat_events);
     } else if (std.mem.eql(u8, span, "wp_fractional_scale_manager_v1")) {
         if (conn.globals.fractional_manager != null) return;
