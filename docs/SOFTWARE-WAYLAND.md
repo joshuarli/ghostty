@@ -162,4 +162,9 @@ WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 \
 cage -- ./zig-out/bin/ghostty -e sh -c "printf 'hello\n'; sleep 1000"
 ```
 
+`sh host/wayland-fake/run.sh` runs the binary against a scripted compositor built
+on libwayland-server. It checks the text-input-v3 traffic and rendering, that
+losing the compositor ends in an error exit rather than an abort, and that a
+compositor without ABGR8888 is refused with that reason.
+
 The QEMU acceptance path is `sh host/wayland-vm/vm.sh test`.
