@@ -7,7 +7,6 @@ const Config = configpkg.Config;
 const input = @import("../../input.zig");
 const Surface = @import("Surface.zig");
 const Connection = @import("connection.zig").Connection;
-const Seat = @import("seat.zig").Seat;
 
 const log = std.log.scoped(.wayland);
 
@@ -16,7 +15,6 @@ pub const App = @This();
 core_app: *CoreApp,
 config: Config,
 conn: ?*Connection,
-seat: ?*Seat,
 running: bool,
 surface: ?*Surface,
 
@@ -28,7 +26,6 @@ pub fn init(self: *App, core_app: *CoreApp, opts: struct {}) !void {
         .core_app = core_app,
         .config = config,
         .conn = null,
-        .seat = null,
         .running = false,
         .surface = null,
     };
@@ -40,10 +37,6 @@ pub fn terminate(self: *App) void {
         self.core_app.alloc.destroy(s);
         self.surface = null;
     }
-    if (self.seat) |st| {
-        st.deinit();
-        self.seat = null;
-    }
     if (self.conn) |c| {
         c.disconnect();
         self.core_app.alloc.destroy(c);
@@ -53,7 +46,7 @@ pub fn terminate(self: *App) void {
 }
 
 pub fn wakeup(self: *App) void {
-    _ = self;
+    if (self.conn) |c| c.wake();
 }
 
 pub fn keyboardLayout(self: *const App) input.KeyboardLayout {
@@ -69,43 +62,33 @@ pub fn run(self: *App) !void {
     const alloc = self.core_app.alloc;
     const conn = try alloc.create(Connection);
     errdefer alloc.destroy(conn);
-    conn.* = try Connection.connect(alloc);
+    try conn.connect(alloc, .{
+        .key_fn = onKey,
+        .key_ud = self,
+        .mouse_button_fn = onMouseButton,
+        .mouse_button_ud = self,
+        .scroll_fn = onScroll,
+        .scroll_ud = self,
+        .cursor_fn = onCursor,
+        .cursor_ud = self,
+        .focus_fn = onFocus,
+        .focus_ud = self,
+    });
     var conn_connected = true;
     errdefer if (conn_connected) {
         conn.disconnect();
     };
     self.conn = conn;
 
-    if (conn.globals.seat) |wl_seat| {
-        const st = try Seat.init(alloc, wl_seat, .{
-            .key_fn = onKey,
-            .key_ud = self,
-            .mouse_button_fn = onMouseButton,
-            .mouse_button_ud = self,
-            .scroll_fn = onScroll,
-            .scroll_ud = self,
-            .cursor_fn = onCursor,
-            .cursor_ud = self,
-            .focus_fn = onFocus,
-            .focus_ud = self,
-        });
-        errdefer st.deinit();
-        self.seat = st;
-    }
-
     self.running = true;
     self.newWindow() catch |err| {
-        if (self.seat) |st| {
-            st.deinit();
-            self.seat = null;
-        }
         self.conn = null;
         conn_connected = false;
         conn.disconnect();
         return err;
     };
     while (self.running) {
-        conn.dispatchPending();
+        try conn.wait(frame_poll_ms);
         try self.core_app.tick(self);
         if (self.surface) |s| {
             s.present();
@@ -117,9 +100,12 @@ pub fn run(self: *App) !void {
             }
         } else break;
         conn.flush();
-        std.Thread.yield() catch {};
     }
 }
+
+/// The renderer publishes frames without notifying the apprt, so the
+/// loop wakes at least this often to collect them.
+const frame_poll_ms = 8;
 
 fn newWindow(self: *App) !void {
     const alloc = self.core_app.alloc;
