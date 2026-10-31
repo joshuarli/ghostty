@@ -6,6 +6,7 @@ test {
     @import("std").testing.refAllDecls(@This());
     _ = @import("wayland/clipboard.zig");
     _ = @import("wayland/connection.zig");
+    _ = @import("wayland/key_repeat.zig");
     _ = @import("wayland/seat.zig");
     _ = @import("wayland/window.zig");
 }

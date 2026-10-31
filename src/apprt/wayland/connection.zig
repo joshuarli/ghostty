@@ -107,6 +107,10 @@ pub const Connection = struct {
         while (!self.display.prepareRead()) {
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         }
+        var timeout = timeout_ms;
+        if (self.seat) |seat| if (seat.repeatTimeoutMs()) |repeat_ms| {
+            timeout = if (timeout < 0) repeat_ms else @min(timeout, repeat_ms);
+        };
         switch (self.display.flush()) {
             .SUCCESS, .AGAIN => {},
             else => {
@@ -128,7 +132,7 @@ pub const Connection = struct {
         if (self.clipboard) |*clipboard| {
             try clipboard.appendPollFds(self.alloc, &self.poll_fds);
         }
-        _ = posix.poll(self.poll_fds.items, timeout_ms) catch |err| {
+        _ = posix.poll(self.poll_fds.items, timeout) catch |err| {
             self.display.cancelRead();
             return err;
         };
@@ -143,6 +147,7 @@ pub const Connection = struct {
             _ = libc.read(self.wake_fd, std.mem.asBytes(&count), @sizeOf(u64));
         }
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+        if (self.seat) |seat| seat.tickRepeat();
         if (self.clipboard) |*clipboard| clipboard.service();
     }
 

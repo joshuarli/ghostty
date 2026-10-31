@@ -6,6 +6,8 @@ const wl = wayland.client.wl;
 const xkbcommon = @import("xkbcommon");
 const input = @import("../../input.zig");
 const keycodes = @import("../../input/keycodes.zig");
+const global = @import("../../global.zig");
+const KeyRepeat = @import("key_repeat.zig").KeyRepeat;
 
 const log = std.log.scoped(.wayland);
 
@@ -30,6 +32,7 @@ pub const Seat = struct {
     events: SeatEvents,
     mods: input.Mods = .{},
     last_serial: u32 = 0,
+    key_repeat: KeyRepeat = .{},
 
     xkb_ctx: ?*xkbcommon.xkb_context = null,
     xkb_keymap: ?*xkbcommon.xkb_keymap = null,
@@ -73,6 +76,38 @@ pub const Seat = struct {
         if (self.xkb_keymap) |k| xkbcommon.xkb_keymap_unref(k);
         if (self.xkb_ctx) |c| xkbcommon.xkb_context_unref(c);
         self.alloc.destroy(self);
+    }
+
+    pub fn repeatTimeoutMs(self: *const Seat) ?i32 {
+        return self.key_repeat.timeoutMs(nowMs());
+    }
+
+    pub fn tickRepeat(self: *Seat) void {
+        const keycode = self.key_repeat.due(nowMs()) orelse return;
+        self.emitKey(keycode, .repeat);
+    }
+
+    fn emitKey(self: *Seat, keycode: u32, action: input.Action) void {
+        const state = self.xkb_state orelse return;
+        const keysym = xkbcommon.xkb_state_key_get_one_sym(state, keycode);
+        var utf8_buf: [8]u8 = undefined;
+        const utf8_len = xkbcommon.xkb_state_key_get_utf8(state, keycode, &utf8_buf, utf8_buf.len);
+        const utf8: []const u8 = if (utf8_len > 0) utf8_buf[0..@intCast(utf8_len)] else "";
+
+        const physical: input.Key = for (keycodes.entries) |entry| {
+            if (entry.native == keycode) break entry.key;
+        } else .unidentified;
+
+        const ev = input.KeyEvent{
+            .action = action,
+            .key = physical,
+            .mods = self.mods,
+            .consumed_mods = .{},
+            .composing = false,
+            .utf8 = utf8,
+            .unshifted_codepoint = unshiftedCodepoint(keysym),
+        };
+        if (self.events.key_fn) |f| _ = f(self.events.key_ud, ev);
     }
 
     fn updateMods(self: *Seat) void {
@@ -155,6 +190,8 @@ fn onKeyboardEvent(
     _ = kb;
     switch (event) {
         .keymap => |km| {
+            defer _ = std.c.close(km.fd);
+            self.key_repeat.cancel();
             if (km.format != .xkb_v1) return;
             const map_str = posix.mmap(
                 null,
@@ -179,6 +216,8 @@ fn onKeyboardEvent(
             );
             if (self.xkb_keymap) |keymap| {
                 self.xkb_state = xkbcommon.xkb_state_new(keymap);
+            } else {
+                log.err("compositor keymap failed to compile; keyboard input is disabled", .{});
             }
             self.updateMods();
         },
@@ -188,6 +227,7 @@ fn onKeyboardEvent(
         },
         .leave => |e| {
             self.last_serial = e.serial;
+            self.key_repeat.cancel();
             if (self.events.focus_fn) |f| f(self.events.focus_ud, false);
         },
         .key => |k| {
@@ -196,35 +236,18 @@ fn onKeyboardEvent(
             const keycode = k.key + 8;
             const action: input.Action = if (k.state == .pressed) .press else .release;
 
-            if (k.state == .pressed or k.state == .released) {
-                _ = xkbcommon.xkb_state_update_key(state, keycode, @intCast(@intFromEnum(k.state)));
-                self.updateMods();
+            _ = xkbcommon.xkb_state_update_key(state, keycode, @intCast(@intFromEnum(k.state)));
+            self.updateMods();
+            self.emitKey(keycode, action);
+
+            switch (action) {
+                .press => if (self.xkb_keymap) |keymap| {
+                    if (xkbcommon.xkb_keymap_key_repeats(keymap, keycode) != 0) {
+                        self.key_repeat.press(keycode, nowMs());
+                    }
+                },
+                else => self.key_repeat.release(keycode),
             }
-
-            const keysym = xkbcommon.xkb_state_key_get_one_sym(state, keycode);
-            var utf8_buf: [8]u8 = undefined;
-            const utf8_len = xkbcommon.xkb_state_key_get_utf8(state, keycode, &utf8_buf, utf8_buf.len);
-            const utf8: []const u8 = if (utf8_len > 0) utf8_buf[0..@intCast(utf8_len)] else "";
-
-            var unshifted_buf: [8]u8 = undefined;
-            const unshifted_len = xkbcommon.xkb_state_key_get_utf8(state, keycode, &unshifted_buf, unshifted_buf.len);
-            _ = unshifted_len;
-            const unshifted_codepoint: u21 = unshiftedCodepoint(keysym);
-
-            const physical: input.Key = for (keycodes.entries) |entry| {
-                if (entry.native == keycode) break entry.key;
-            } else .unidentified;
-
-            const ev = input.KeyEvent{
-                .action = action,
-                .key = physical,
-                .mods = self.mods,
-                .consumed_mods = .{},
-                .composing = false,
-                .utf8 = utf8,
-                .unshifted_codepoint = unshifted_codepoint,
-            };
-            if (self.events.key_fn) |f| _ = f(self.events.key_ud, ev);
         },
         .modifiers => |m| {
             self.last_serial = m.serial;
@@ -241,8 +264,12 @@ fn onKeyboardEvent(
                 self.updateMods();
             }
         },
-        .repeat_info => {},
+        .repeat_info => |r| self.key_repeat.configure(r.rate, r.delay),
     }
+}
+
+fn nowMs() i64 {
+    return std.Io.Timestamp.now(global.io(), .awake).toMilliseconds();
 }
 
 fn unshiftedCodepoint(keysym: u32) u21 {
@@ -256,7 +283,8 @@ fn unshiftedCodepoint(keysym: u32) u21 {
     return 0;
 }
 
-fn onPointerEvent(    ptr: *wl.Pointer,
+fn onPointerEvent(
+    ptr: *wl.Pointer,
     event: wl.Pointer.Event,
     self: *Seat,
 ) void {
@@ -267,11 +295,8 @@ fn onPointerEvent(    ptr: *wl.Pointer,
             self.pointer_x = e.surface_x.toDouble();
             self.pointer_y = e.surface_y.toDouble();
             if (self.events.cursor_fn) |f| f(self.events.cursor_ud, self.pointer_x, self.pointer_y, self.mods);
-            if (self.events.focus_fn) |f| f(self.events.focus_ud, true);
         },
-        .leave => {
-            if (self.events.focus_fn) |f| f(self.events.focus_ud, false);
-        },
+        .leave => {},
         .motion => |m| {
             self.pointer_x = m.surface_x.toDouble();
             self.pointer_y = m.surface_y.toDouble();
