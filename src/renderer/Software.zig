@@ -564,3 +564,16 @@ test "damage tracks changed rows and clears when nothing changed" {
         .rects => |rects| try testing.expectEqual(@as(usize, 0), rects.len),
     }
 }
+
+test {
+    _ = @import("software/Buffer.zig");
+    _ = @import("software/Damage.zig");
+    _ = @import("software/Frame.zig");
+    _ = @import("software/Pipeline.zig");
+    _ = @import("software/Sampler.zig");
+    _ = @import("software/Target.zig");
+    _ = @import("software/Texture.zig");
+    _ = @import("software/raster.zig");
+    _ = @import("software/reference_test.zig");
+    _ = @import("software/shaders.zig");
+}

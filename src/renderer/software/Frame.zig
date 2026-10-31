@@ -184,7 +184,7 @@ test "empty render pass completes without touching pixels" {
     var target = try Target.init(std.testing.allocator, 1, 1);
     defer target.deinit();
     var frame = Frame.init(std.testing.allocator, &target, .full);
-    var pass = frame.renderPass(&.{.{ .target = &target }});
+    var pass = frame.renderPass(&.{.{ .target = .{ .target = target } }});
     pass.complete();
     try std.testing.expectEqual(@as(u32, 0), target.pixels[0]);
 }
