@@ -457,7 +457,7 @@ test "damage history unions missed revisions and rejects stale buffers" {
     win.recordDamage(2, &first);
     win.recordDamage(3, &second);
 
-    const merged = win.incrementalDamage(&slot, 3, &current) orelse return error.MissingDamage;
+    const merged = win.incrementalDamage(&slot, 4, &current) orelse return error.MissingDamage;
     try std.testing.expectEqual(@as(usize, 3), merged.len);
     try std.testing.expectEqual(@as(u32, 1), merged[0].y);
     try std.testing.expectEqual(@as(u32, 3), merged[2].y);
