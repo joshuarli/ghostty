@@ -7,7 +7,7 @@
 //!
 //! The glyph blend tables are adapted from Monstar (MIT, Tim Culverhouse),
 //! commit 203e1013b184b47e6c0482671882bb791aba21f3,
-//! `src/pixel_raster.zig`.
+//! `src/pixel_raster.zig`. See LICENSES/Monstar-MIT.txt.
 
 const std = @import("std");
 const types = @import("../shaders/types.zig");
