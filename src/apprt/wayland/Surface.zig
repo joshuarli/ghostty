@@ -328,12 +328,10 @@ fn presentFrame(self: *Surface, frame: renderer.Renderer.ExportedFrame) !void {
                     mem.revision,
                 );
             } else {
-                try win.presentMemory(mem.pixels, mem.width, mem.height, null, 0);
+                try win.presentMemory(mem.pixels, mem.width, mem.height, .bottom_up, null, 0);
             }
         },
-        .dmabuf => |dm| {
-            var m = dm;
-            m.deinit();
+        .dmabuf => {
             self.core_surface.reportPresentationHealth(.unhealthy);
             return error.UnsupportedFrame;
         },
