@@ -32,17 +32,21 @@ pub fn init(self: *App, core_app: *CoreApp, opts: struct {}) !void {
 }
 
 pub fn terminate(self: *App) void {
+    self.teardown();
+    self.config.deinit();
+}
+
+fn teardown(self: *App) void {
     if (self.surface) |s| {
+        self.surface = null;
         s.deinit();
         self.core_app.alloc.destroy(s);
-        self.surface = null;
     }
     if (self.conn) |c| {
+        self.conn = null;
         c.disconnect();
         self.core_app.alloc.destroy(c);
-        self.conn = null;
     }
-    self.config.deinit();
 }
 
 pub fn wakeup(self: *App) void {
@@ -59,37 +63,11 @@ pub fn wait(self: *const App) !void {
 }
 
 pub fn run(self: *App) !void {
-    const alloc = self.core_app.alloc;
-    const conn = try alloc.create(Connection);
-    errdefer alloc.destroy(conn);
-    try conn.connect(alloc, .{
-        .key_fn = onKey,
-        .key_ud = self,
-        .mouse_button_fn = onMouseButton,
-        .mouse_button_ud = self,
-        .scroll_fn = onScroll,
-        .scroll_ud = self,
-        .cursor_fn = onCursor,
-        .cursor_ud = self,
-        .focus_fn = onFocus,
-        .focus_ud = self,
-    });
-    var conn_connected = true;
-    errdefer if (conn_connected) {
-        conn.disconnect();
-    };
-    self.conn = conn;
-    errdefer {
-        if (self.conn == conn) self.conn = null;
-    }
-
+    defer self.teardown();
+    try self.connect();
     self.running = true;
-    self.newWindow() catch |err| {
-        self.conn = null;
-        conn_connected = false;
-        conn.disconnect();
-        return err;
-    };
+    try self.newWindow();
+    const conn = self.conn.?;
     while (self.running) {
         try conn.wait(-1);
         try self.core_app.tick(self);
@@ -106,15 +84,30 @@ pub fn run(self: *App) !void {
     }
 }
 
+fn connect(self: *App) !void {
+    const alloc = self.core_app.alloc;
+    const conn = try alloc.create(Connection);
+    errdefer alloc.destroy(conn);
+    try conn.connect(alloc, .{
+        .key_fn = onKey,
+        .key_ud = self,
+        .mouse_button_fn = onMouseButton,
+        .mouse_button_ud = self,
+        .scroll_fn = onScroll,
+        .scroll_ud = self,
+        .cursor_fn = onCursor,
+        .cursor_ud = self,
+        .focus_fn = onFocus,
+        .focus_ud = self,
+    });
+    self.conn = conn;
+}
+
 fn newWindow(self: *App) !void {
     const alloc = self.core_app.alloc;
     const rt_surface = try alloc.create(Surface);
     errdefer alloc.destroy(rt_surface);
-    rt_surface.init(self) catch |err| {
-        if (rt_surface.window) |w| w.destroy();
-        return err;
-    };
-    errdefer rt_surface.deinit();
+    try rt_surface.init(self);
     self.surface = rt_surface;
 }
 

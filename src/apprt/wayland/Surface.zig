@@ -41,10 +41,13 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
             "com.mitchellh.ghostty",
             "Ghostty",
         );
-        errdefer win.destroy();
         self.window = win;
         self.size = .{ .width = win.pixelWidth(), .height = win.pixelHeight() };
     }
+    errdefer if (self.window) |win| {
+        win.destroy();
+        self.window = null;
+    };
 
     var config = try apprt.surface.newConfig(
         app.core_app,
