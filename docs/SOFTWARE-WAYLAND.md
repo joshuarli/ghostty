@@ -151,9 +151,22 @@ and single latest-frame queue replace Monstar's separate raster scheduler.
 
 The Wayland apprt tests run with
 `zig build test -Dapp-runtime=wayland -Drenderer=software -Dtest-filter=wayland`.
-Unit tests cover key repeat timing, damage-only buffer repair, buffer growth, texture row updates, damage intersection,
-glyph placement, opaque and translucent compositing, incremental row repaint
-against a full repaint, and renderer damage detection. Runtime checks use a
+The software backend's tests run with
+`zig build test -Dapp-runtime=wayland -Drenderer=software -Dtest-filter=renderer`.
+Unit tests cover key repeat timing, damage-only buffer repair, buffer growth,
+texture row updates, damage intersection, glyph placement, opaque and
+translucent compositing, incremental row repaint against a full repaint, and
+renderer damage detection.
+
+`src/renderer/software/reference_test.zig` holds a floating-point reference
+transcribed from the GLSL shaders and the blend state they run under. It renders
+whole scenes and compares them with the rasterizer pixel by pixel, in native,
+linear, and linear-corrected blending, within a few levels of 8-bit rounding.
+Scenes cover translucent text and backgrounds, combining marks, box drawing,
+wide glyphs with a wide cursor, color glyphs, minimum contrast, and Kitty images
+at fractional offsets. It shares no code with `raster.zig`, so a mismatch means
+the rasterizer drifted from the shaders. Background images have no reference
+scene yet. Runtime checks use a
 headless `cage`/pixman compositor and screenshot the real executable:
 
 ```sh
