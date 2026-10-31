@@ -63,6 +63,16 @@ const encode16: [65536]u8 = blk: {
     break :blk table;
 };
 
+/// Linear light, scaled to 0...65535, of an sRGB value in 0...255 that may
+/// fall between two byte levels.
+fn linearFromEncoded(value: f32) f32 {
+    const clamped = std.math.clamp(value, 0, 255);
+    const low: usize = @intFromFloat(clamped);
+    const high = @min(low + 1, 255);
+    const t = clamped - @as(f32, @floatFromInt(low));
+    return @as(f32, @floatFromInt(linear8[low])) * (1 - t) + @as(f32, @floatFromInt(linear8[high])) * t;
+}
+
 fn luminance(r: u16, g: u16, b: u16) u32 {
     return (@as(u32, r) * 2126 + @as(u32, g) * 7152 + @as(u32, b) * 722) / 10000;
 }
@@ -145,9 +155,8 @@ fn fillSpan(target: *Target, y: u32, x0: u32, x1: u32, color: [4]u8, linear: boo
     const start = @min(x0, target.width);
     const end = @min(x1, target.width);
     if (end <= start) return;
-    const src = rgba(color[0], color[1], color[2], color[3]);
     for (target.pixels[@as(usize, y) * target.width + start ..][0 .. end - start]) |*pixel| {
-        pixel.* = if (linear) blendColor(pixel.*, color, true, 255) else blendEncoded(pixel.*, src);
+        pixel.* = blendColor(pixel.*, color, linear, 255);
     }
 }
 
@@ -171,19 +180,31 @@ pub fn clear(target: *Target, damage: Damage, color: [4]f32) void {
     }
 }
 
+fn premultipliedBackground(u: *const Uniforms) Pixel {
+    const c = u.bg_color;
+    const a: u32 = c[3];
+    if (u.bools.use_linear_blending) {
+        const rgb = encodeLinear(
+            @as(u32, linear8[c[0]]) * a / 255,
+            @as(u32, linear8[c[1]]) * a / 255,
+            @as(u32, linear8[c[2]]) * a / 255,
+        );
+        return rgba(rgb[0], rgb[1], rgb[2], c[3]);
+    }
+    return rgba(
+        @intCast(@as(u32, c[0]) * a / 255),
+        @intCast(@as(u32, c[1]) * a / 255),
+        @intCast(@as(u32, c[2]) * a / 255),
+        c[3],
+    );
+}
+
 pub fn drawBgColor(target: *Target, damage: Damage, u: *const Uniforms) void {
-    const linear = u.bools.use_linear_blending;
-    const color = backgroundColor(u, linear);
-    const src = rgba(color[0], color[1], color[2], color[3]);
+    const src = premultipliedBackground(u);
     var y: u32 = 0;
     while (y < target.height) : (y += 1) {
         if (!damageRow(damage, y, target.width)) continue;
-        if (!linear or color[3] == 255) {
-            @memset(target.pixels[@as(usize, y) * target.width ..][0..target.width], src);
-        } else {
-            @memset(target.pixels[@as(usize, y) * target.width ..][0..target.width], 0);
-            fillSpan(target, y, 0, target.width, color, true);
-        }
+        @memset(target.pixels[@as(usize, y) * target.width ..][0..target.width], src);
     }
 }
 
@@ -302,33 +323,33 @@ fn cursorAt(u: *const Uniforms, x: u32, y: u32) bool {
         (x == u.cursor_pos[0] or (wide and x == u.cursor_pos[0] + 1));
 }
 
-fn cellBgColor(u: *const Uniforms, bg_handle: Handle, x: u32, y: u32) [4]u8 {
+fn premultiplyLinear(rgb: [3]u16, alpha_value: u8) [3]u16 {
+    return .{
+        @intCast(@as(u32, rgb[0]) * alpha_value / 255),
+        @intCast(@as(u32, rgb[1]) * alpha_value / 255),
+        @intCast(@as(u32, rgb[2]) * alpha_value / 255),
+    };
+}
+
+/// The cell background composited over the surface background, as
+/// premultiplied linear light. The text shaders judge contrast and weight
+/// against this value.
+fn premultipliedLinearBackground(u: *const Uniforms, bg_handle: Handle, x: u32, y: u32) [3]u16 {
+    const global = premultiplyLinear(
+        linearRgb(.{ u.bg_color[0], u.bg_color[1], u.bg_color[2] }),
+        u.bg_color[3],
+    );
     const cells = bg_handle.items(CellBg);
     const index = @as(usize, y) * u.grid_size[0] + x;
-    if (index >= cells.len) return u.bg_color;
+    if (index >= cells.len) return global;
     const cell = cells[index];
-    if (cell[3] == 0) return u.bg_color;
-    if (!u.bools.use_linear_blending) {
-        const a: u32 = cell[3];
-        const inv: u32 = 255 - a;
-        return .{
-            @intCast((@as(u32, cell[0]) * a + @as(u32, u.bg_color[0]) * inv) / 255),
-            @intCast((@as(u32, cell[1]) * a + @as(u32, u.bg_color[1]) * inv) / 255),
-            @intCast((@as(u32, cell[2]) * a + @as(u32, u.bg_color[2]) * inv) / 255),
-            @intCast(@min(255, a + @as(u32, u.bg_color[3]) * inv / 255)),
-        };
-    }
-    const fg = linearRgb(.{ cell[0], cell[1], cell[2] });
-    const bg = linearRgb(.{ u.bg_color[0], u.bg_color[1], u.bg_color[2] });
-    const a: u32 = cell[3];
-    const inv: u32 = 255 - a;
-    const out = encodeLinear(
-        @as(u32, fg[0]) * a / 255 + @as(u32, bg[0]) * inv / 255,
-        @as(u32, fg[1]) * a / 255 + @as(u32, bg[1]) * inv / 255,
-        @as(u32, fg[2]) * a / 255 + @as(u32, bg[2]) * inv / 255,
-    );
-    const out_a = a + @as(u32, u.bg_color[3]) * inv / 255;
-    return .{ out[0], out[1], out[2], @intCast(@min(255, out_a)) };
+    const above = premultiplyLinear(linearRgb(.{ cell[0], cell[1], cell[2] }), cell[3]);
+    const inv: u32 = 255 - cell[3];
+    return .{
+        @intCast(@min(65535, @as(u32, above[0]) + @as(u32, global[0]) * inv / 255)),
+        @intCast(@min(65535, @as(u32, above[1]) + @as(u32, global[1]) * inv / 255)),
+        @intCast(@min(65535, @as(u32, above[2]) + @as(u32, global[2]) * inv / 255)),
+    };
 }
 
 fn resolveTextSource(
@@ -338,19 +359,13 @@ fn resolveTextSource(
 ) TextSource {
     const linear = u.bools.use_linear_blending;
     var color = cell.color;
-    if (cursorAt(u, cell.grid_pos[0], cell.grid_pos[1]) and !cell.bools.is_cursor_glyph) {
-        color = u.cursor_color;
-        if (linear) {
-            color = .{ u.cursor_color[0], u.cursor_color[1], u.cursor_color[2], u.cursor_color[3] };
-        }
-    }
-
     var lin = linearRgb(.{ color[0], color[1], color[2] });
+    const bg_lin = premultipliedLinearBackground(u, bg_handle, cell.grid_pos[0], cell.grid_pos[1]);
+    const bg_l = luminance(bg_lin[0], bg_lin[1], bg_lin[2]);
+
     if (u.min_contrast > 1.0 and !cell.bools.no_min_contrast) {
-        const bg = cellBgColor(u, bg_handle, cell.grid_pos[0], cell.grid_pos[1]);
-        const bg_lin = linearRgb(.{ bg[0], bg[1], bg[2] });
-        const fg_l = luminance(lin[0], lin[1], lin[2]);
-        const bg_l = luminance(bg_lin[0], bg_lin[1], bg_lin[2]);
+        const fg = premultiplyLinear(lin, color[3]);
+        const fg_l = luminance(fg[0], fg[1], fg[2]);
         const ratio = @as(f32, @floatFromInt(@max(fg_l, bg_l) + 3277)) /
             @as(f32, @floatFromInt(@min(fg_l, bg_l) + 3277));
         if (ratio < u.min_contrast) {
@@ -368,27 +383,30 @@ fn resolveTextSource(
         }
     }
 
+    if (cursorAt(u, cell.grid_pos[0], cell.grid_pos[1]) and !cell.bools.is_cursor_glyph) {
+        color = u.cursor_color;
+        lin = linearRgb(.{ color[0], color[1], color[2] });
+    }
+
     var result: TextSource = .{
         .srgb = .{ color[0], color[1], color[2] },
         .linear = lin,
         .alpha = color[3],
     };
 
-    if (u.bools.use_linear_correction) {
-        const bg = cellBgColor(u, bg_handle, cell.grid_pos[0], cell.grid_pos[1]);
-        const bg_lin = linearRgb(.{ bg[0], bg[1], bg[2] });
-        const fg_l = luminance(lin[0], lin[1], lin[2]);
-        const bg_l = luminance(bg_lin[0], bg_lin[1], bg_lin[2]);
-        if (fg_l != bg_l) {
+    if (u.bools.use_linear_correction and linear) {
+        const fg = premultiplyLinear(lin, color[3]);
+        const fg_l = luminance(fg[0], fg[1], fg[2]);
+        if (@abs(@as(i64, fg_l) - @as(i64, bg_l)) > 66) {
             var table: [256]u8 = undefined;
-            const fg_enc = encode16[@min(fg_l, 65535)];
-            const bg_enc = encode16[@min(bg_l, 65535)];
+            const fg_enc = fromLinear(@as(f32, @floatFromInt(fg_l)) / 65535.0) * 255.0;
+            const bg_enc = fromLinear(@as(f32, @floatFromInt(bg_l)) / 65535.0) * 255.0;
+            const diff: f32 = @floatFromInt(@as(i64, fg_l) - @as(i64, bg_l));
             for (&table, 0..) |*entry, cov| {
-                const blend_enc: u8 = @intCast((@as(u32, fg_enc) * cov + @as(u32, bg_enc) * (255 - cov)) / 255);
-                const blend_l = linear8[blend_enc];
-                const diff = @as(i64, fg_l) - @as(i64, bg_l);
-                const corrected = @divTrunc((@as(i64, blend_l) - @as(i64, bg_l)) * 255, diff);
-                entry.* = @intCast(std.math.clamp(corrected, 0, 255));
+                const weight = @as(f32, @floatFromInt(cov)) / 255.0;
+                const blend_l = linearFromEncoded(fg_enc * weight + bg_enc * (1 - weight));
+                const corrected = (blend_l - @as(f32, @floatFromInt(bg_l))) / diff;
+                entry.* = @intFromFloat(@round(std.math.clamp(corrected, 0, 1) * 255.0));
             }
             result.correction = table;
         }
@@ -508,41 +526,55 @@ pub fn drawCellText(
     }
 }
 
-fn sampleBilinear(tex: *const Texture, x: f32, y: f32) [4]u8 {
-    if (tex.width == 0 or tex.height == 0) return .{ 0, 0, 0, 0 };
+const LinearSample = struct {
+    rgb: [3]f32,
+    alpha: f32,
+};
+
+/// Image textures are sRGB on the GPU, so filtering happens in linear light.
+fn sampleBilinearLinear(tex: *const Texture, x: f32, y: f32) LinearSample {
+    if (tex.width == 0 or tex.height == 0) return .{ .rgb = .{ 0, 0, 0 }, .alpha = 0 };
     const x0: i64 = @intFromFloat(@floor(x));
     const y0: i64 = @intFromFloat(@floor(y));
     const fx = x - @floor(x);
     const fy = y - @floor(y);
-    const p00 = tex.sample(x0, y0);
-    const p10 = tex.sample(x0 + 1, y0);
-    const p01 = tex.sample(x0, y0 + 1);
-    const p11 = tex.sample(x0 + 1, y0 + 1);
-    var out: [4]u8 = undefined;
-    for (&out, 0..) |*v, i| {
-        const top = @as(f32, @floatFromInt(p00[i])) * (1 - fx) + @as(f32, @floatFromInt(p10[i])) * fx;
-        const bottom = @as(f32, @floatFromInt(p01[i])) * (1 - fx) + @as(f32, @floatFromInt(p11[i])) * fx;
-        v.* = @intFromFloat(@round(top * (1 - fy) + bottom * fy));
+    const taps = [4][4]u8{
+        tex.sample(x0, y0),
+        tex.sample(x0 + 1, y0),
+        tex.sample(x0, y0 + 1),
+        tex.sample(x0 + 1, y0 + 1),
+    };
+    const weights = [4]f32{ (1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy };
+    var out: LinearSample = .{ .rgb = .{ 0, 0, 0 }, .alpha = 0 };
+    for (taps, weights) |tap, weight| {
+        for (&out.rgb, 0..) |*channel, i| {
+            channel.* += @as(f32, @floatFromInt(linear8[tap[i]])) / 65535.0 * weight;
+        }
+        out.alpha += @as(f32, @floatFromInt(tap[3])) / 255.0 * weight;
     }
     return out;
 }
 
-fn blendImageSample(dst: Pixel, sample: [4]u8, linear: bool) Pixel {
-    if (sample[3] == 0) return dst;
+fn linearToByte(value: f32) u8 {
+    const scaled = std.math.clamp(value, 0, 1) * 65535.0 + 0.5;
+    return encode16[@intFromFloat(scaled)];
+}
+
+fn blendImageSample(dst: Pixel, sample: LinearSample, linear: bool) Pixel {
+    const a: u8 = @intFromFloat(@round(std.math.clamp(sample.alpha, 0, 1) * 255));
+    if (a == 0) return dst;
     if (linear) {
-        const rgb = linearRgb(.{ sample[0], sample[1], sample[2] });
         return blendLinear(dst, .{
-            @as(u32, rgb[0]) * sample[3] / 255,
-            @as(u32, rgb[1]) * sample[3] / 255,
-            @as(u32, rgb[2]) * sample[3] / 255,
-        }, sample[3]);
+            @intFromFloat(@round(std.math.clamp(sample.rgb[0], 0, 1) * sample.alpha * 65535)),
+            @intFromFloat(@round(std.math.clamp(sample.rgb[1], 0, 1) * sample.alpha * 65535)),
+            @intFromFloat(@round(std.math.clamp(sample.rgb[2], 0, 1) * sample.alpha * 65535)),
+        }, a);
     }
-    const a: u32 = sample[3];
     return blendEncoded(dst, rgba(
-        @intCast(@as(u32, sample[0]) * a / 255),
-        @intCast(@as(u32, sample[1]) * a / 255),
-        @intCast(@as(u32, sample[2]) * a / 255),
-        sample[3],
+        @intFromFloat(@round(@as(f32, @floatFromInt(linearToByte(sample.rgb[0]))) * sample.alpha)),
+        @intFromFloat(@round(@as(f32, @floatFromInt(linearToByte(sample.rgb[1]))) * sample.alpha)),
+        @intFromFloat(@round(@as(f32, @floatFromInt(linearToByte(sample.rgb[2]))) * sample.alpha)),
+        a,
     ));
 }
 
@@ -582,7 +614,7 @@ pub fn drawImages(
             while (px < x1) : (px += 1) {
                 const u_norm = (@as(f32, @floatFromInt(px)) + 0.5 - x) / w;
                 const sx = img.source_rect[0] + u_norm * img.source_rect[2] - 0.5;
-                const sample = sampleBilinear(tex, sx, sy);
+                const sample = sampleBilinearLinear(tex, sx, sy);
                 const dst = &target.pixels[@as(usize, py) * target.width + px];
                 dst.* = blendImageSample(dst.*, sample, linear);
             }
@@ -657,18 +689,18 @@ pub fn drawBgImage(
                 tx = @mod(@mod(tx, tex_w) + tex_w, tex_w);
                 ty = @mod(@mod(ty, tex_h) + tex_h, tex_h);
             }
-            var sample: [4]u8 = .{ 0, 0, 0, 0 };
+            var sample: LinearSample = .{ .rgb = .{ 0, 0, 0 }, .alpha = 0 };
             if (tx >= 0 and tx < tex_w and ty >= 0 and ty < tex_h) {
-                sample = sampleBilinear(tex, tx - 0.5, ty - 0.5);
+                sample = sampleBilinearLinear(tex, tx - 0.5, ty - 0.5);
             }
-            var rgb: [3]f32 = .{
-                @as(f32, @floatFromInt(sample[0])) / 255.0,
-                @as(f32, @floatFromInt(sample[1])) / 255.0,
-                @as(f32, @floatFromInt(sample[2])) / 255.0,
-            };
-            var a = @as(f32, @floatFromInt(sample[3])) / 255.0;
-            if (linear) {
-                rgb = .{ toLinear(rgb[0]), toLinear(rgb[1]), toLinear(rgb[2]) };
+            var rgb: [3]f32 = sample.rgb;
+            var a = sample.alpha;
+            if (!linear) {
+                rgb = .{
+                    @as(f32, @floatFromInt(linearToByte(rgb[0]))) / 255.0,
+                    @as(f32, @floatFromInt(linearToByte(rgb[1]))) / 255.0,
+                    @as(f32, @floatFromInt(linearToByte(rgb[2]))) / 255.0,
+                };
             }
             rgb[0] *= a;
             rgb[1] *= a;
@@ -768,6 +800,7 @@ test "glyph placement uses bearings and the grayscale atlas" {
         .color = .{ 255, 0, 0, 255 },
         .atlas = .grayscale,
     }};
+    drawBgColor(&target, .full, &u);
     drawCellText(
         &target,
         .full,
