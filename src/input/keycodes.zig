@@ -39,6 +39,25 @@ pub const Entry = struct {
     code: []const u8, // W3C DOM code, static memory
 };
 
+/// The macOS virtual keycode of a physical key on every platform. Keyboard
+/// sound is keyed by these codes.
+pub fn macKeycode(key: Key) ?u16 {
+    const code = mac_codes.get(key);
+    return if (code == unmapped) null else code;
+}
+
+const unmapped: u16 = 0xffff;
+
+const mac_codes = mac_codes: {
+    @setEvalBranchQuota(100_000);
+    var table = std.EnumArray(Key, u16).initFill(unmapped);
+    for (raw_entries) |raw| {
+        const key = code_to_key.get(raw[5]) orelse continue;
+        if (raw[4] != unmapped) table.set(key, @intCast(raw[4]));
+    }
+    break :mac_codes table;
+};
+
 /// A map from code to key. This isn't meant to be used at runtime
 /// (though it could), so it isn't exported. It used to build the
 /// key value for Entry.
@@ -669,5 +688,14 @@ pub const raw_entries: []const RawEntry = &.{
     .{ 0x0c02a2, 0x00cc, 0x00d4, 0x0000, 0xffff, "" },
     .{ 0x0c02d0, 0x0279, 0x0281, 0x0000, 0xffff, "" },
 };
+
+test "mac keycodes follow the physical key" {
+    try std.testing.expectEqual(@as(?u16, 0x00), macKeycode(.key_a));
+    try std.testing.expectEqual(@as(?u16, 0x31), macKeycode(.space));
+    try std.testing.expectEqual(@as(?u16, 0x38), macKeycode(.shift_left));
+    try std.testing.expectEqual(@as(?u16, 0x3B), macKeycode(.control_left));
+    try std.testing.expectEqual(@as(?u16, 0x37), macKeycode(.meta_left));
+    try std.testing.expectEqual(@as(?u16, null), macKeycode(.unidentified));
+}
 
 test {}

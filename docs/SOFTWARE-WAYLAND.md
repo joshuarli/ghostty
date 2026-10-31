@@ -100,6 +100,33 @@ recycled buffer receives the union of every missed revision. A gap older than
 the ring, or any missed full frame, sends a full-buffer damage rectangle.
 Empty damage frames are dropped without a commit.
 
+## Sound
+
+Keyboard sound and the terminal bell play through ALSA, by talking to the
+kernel's PCM devices (`/dev/snd/pcmC*D*p`) with ioctls. There is no libasound,
+PulseAudio, PipeWire, or sound-server dependency, and the static build stays
+static. The structs and ioctl numbers in `src/sound/alsa.zig` mirror
+`sound/asound.h`, and the negotiation follows tinyalsa.
+
+- `keyboard-sound` and its `keyboard-sound-*` options select and shape the
+  buckling-spring sounds, which are keyed by physical key. Ctrl+Shift stands in
+  for the command key that triggers the copy, paste, cut, and undo chimes.
+- `bell-features = audio` rings the terminal bell. `bell-audio-path` names an
+  uncompressed PCM or float WAV file, and an unset or unplayable path plays a
+  short built-in tone. `bell-audio-volume` sets its volume, independent of
+  `keyboard-sound-volume`, and the bell sounds whether or not the window is
+  focused.
+- `sound-device = hw:CARD,DEVICE` picks the device. Unset, the first free
+  playback device that is not an HDMI or DisplayPort output is used.
+
+This is plain hardware access with no mixing plugin, so it cannot play while
+another program holds the device, and it needs permission for `/dev/snd`,
+usually the `audio` group. Ghostty opens the device when a sound is queued and
+releases it two seconds after the last one, and it logs a warning when the
+device is busy or missing. Sounds queued while the device is unavailable are
+dropped, not replayed later. Sound settings are read at startup and are not
+applied on configuration reload.
+
 ## Limits
 
 The profile is Wayland-only and Linux-only. It excludes GTK, libadwaita,

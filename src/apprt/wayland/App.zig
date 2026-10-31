@@ -5,6 +5,8 @@ const CoreApp = @import("../../App.zig");
 const configpkg = @import("../../config.zig");
 const Config = configpkg.Config;
 const input = @import("../../input.zig");
+const keycodes = @import("../../input/keycodes.zig");
+const soundpkg = @import("../../sound.zig");
 const Surface = @import("Surface.zig");
 const Connection = @import("connection.zig").Connection;
 const text_input = @import("text_input.zig");
@@ -18,6 +20,7 @@ config: Config,
 conn: ?*Connection,
 running: bool,
 surface: ?*Surface,
+sound: ?*soundpkg.Sound = null,
 
 pub fn init(self: *App, core_app: *CoreApp, opts: struct {}) !void {
     _ = opts;
@@ -38,6 +41,7 @@ pub fn terminate(self: *App) void {
 }
 
 fn teardown(self: *App) void {
+    self.stopSound();
     if (self.surface) |s| {
         self.surface = null;
         s.deinit();
@@ -66,6 +70,7 @@ pub fn wait(self: *const App) !void {
 pub fn run(self: *App) !void {
     defer self.teardown();
     try self.connect();
+    self.startSound();
     self.running = true;
     try self.newWindow();
     const conn = self.conn.?;
@@ -84,6 +89,39 @@ pub fn run(self: *App) !void {
         } else break;
         conn.flush();
     }
+}
+
+fn startSound(self: *App) void {
+    const config = &self.config;
+    const keys = config.@"keyboard-sound" != .off;
+    const bell = config.@"bell-features".audio;
+    if (!keys and !bell) return;
+    const bell_path: ?[]const u8 = if (config.@"bell-audio-path") |path| switch (path) {
+        inline else => |value| value,
+    } else null;
+    self.sound = soundpkg.Sound.create(self.core_app.alloc, .{
+        .volume = @floatCast(config.@"keyboard-sound-volume".value),
+        .release = config.@"keyboard-sound-release",
+        .variation = config.@"keyboard-sound-variation",
+        .spatial = config.@"keyboard-sound-spatial",
+        .focused = false,
+        .enabled = keys,
+        .bell = .{
+            .enabled = bell,
+            .volume = @floatCast(config.@"bell-audio-volume"),
+            .path = bell_path,
+        },
+        .device = config.@"sound-device" orelse "",
+    }) catch |err| blk: {
+        log.warn("sound unavailable: {}", .{err});
+        break :blk null;
+    };
+}
+
+fn stopSound(self: *App) void {
+    const output = self.sound orelse return;
+    self.sound = null;
+    output.deinit();
 }
 
 fn connect(self: *App) !void {
@@ -152,6 +190,10 @@ pub fn performAction(
             if (self.conn) |c| c.wake();
             return true;
         },
+        .ring_bell => {
+            if (self.sound) |output| output.ringBell();
+            return true;
+        },
         else => {
             log.debug("unhandled action {}", .{action});
             return false;
@@ -180,6 +222,14 @@ pub fn redrawInspector(_: *App, surface: *Surface) void {
 
 fn onKey(ud: ?*anyopaque, event: input.KeyEvent) bool {
     const self: *App = @ptrCast(@alignCast(ud orelse return false));
+    if (self.sound) |output| {
+        if (keycodes.macKeycode(event.key)) |code| output.key(
+            code,
+            if (event.action == .release) .up else .down,
+            event.action == .repeat,
+            0,
+        );
+    }
     const s = self.surface orelse return false;
     if (event.action == .release) {
         _ = s.handleKey(event);
@@ -220,6 +270,7 @@ fn onCursor(ud: ?*anyopaque, x: f64, y: f64, mods: input.Mods) void {
 fn onFocus(ud: ?*anyopaque, focused: bool) void {
     const self: *App = @ptrCast(@alignCast(ud orelse return));
     self.core_app.focusEvent(focused);
+    if (self.sound) |output| output.setFocused(focused);
     const s = self.surface orelse return;
     s.handleFocus(focused);
 }
