@@ -359,45 +359,45 @@ pub fn add(
     // Glslang
     if (shader_compilers) {
         if (b.lazyDependency("glslang", .{
-        .target = target,
-        .optimize = optimize,
-    })) |glslang_dep| {
-        step.root_module.addImport("glslang", glslang_dep.module("glslang"));
-        if (b.systemIntegrationOption("glslang", .{})) {
-            step.root_module.linkSystemLibrary("glslang", dynamic_link_opts);
-            step.root_module.linkSystemLibrary(
-                "glslang-default-resource-limits",
-                dynamic_link_opts,
-            );
-        } else {
-            step.root_module.linkLibrary(glslang_dep.artifact("glslang"));
-            try static_libs.append(
-                b.allocator,
-                glslang_dep.artifact("glslang").getEmittedBin(),
-            );
-        }
+            .target = target,
+            .optimize = optimize,
+        })) |glslang_dep| {
+            step.root_module.addImport("glslang", glslang_dep.module("glslang"));
+            if (b.systemIntegrationOption("glslang", .{})) {
+                step.root_module.linkSystemLibrary("glslang", dynamic_link_opts);
+                step.root_module.linkSystemLibrary(
+                    "glslang-default-resource-limits",
+                    dynamic_link_opts,
+                );
+            } else {
+                step.root_module.linkLibrary(glslang_dep.artifact("glslang"));
+                try static_libs.append(
+                    b.allocator,
+                    glslang_dep.artifact("glslang").getEmittedBin(),
+                );
+            }
         }
     }
 
     // Spirv-cross
     if (shader_compilers) {
         if (b.lazyDependency("spirv_cross", .{
-        .target = target,
-        .optimize = optimize,
-    })) |spirv_cross_dep| {
-        step.root_module.addImport(
-            "spirv_cross",
-            spirv_cross_dep.module("spirv_cross"),
-        );
-        if (b.systemIntegrationOption("spirv-cross", .{})) {
-            step.root_module.linkSystemLibrary("spirv-cross-c-shared", dynamic_link_opts);
-        } else {
-            step.root_module.linkLibrary(spirv_cross_dep.artifact("spirv_cross"));
-            try static_libs.append(
-                b.allocator,
-                spirv_cross_dep.artifact("spirv_cross").getEmittedBin(),
+            .target = target,
+            .optimize = optimize,
+        })) |spirv_cross_dep| {
+            step.root_module.addImport(
+                "spirv_cross",
+                spirv_cross_dep.module("spirv_cross"),
             );
-        }
+            if (b.systemIntegrationOption("spirv-cross", .{})) {
+                step.root_module.linkSystemLibrary("spirv-cross-c-shared", dynamic_link_opts);
+            } else {
+                step.root_module.linkLibrary(spirv_cross_dep.artifact("spirv_cross"));
+                try static_libs.append(
+                    b.allocator,
+                    spirv_cross_dep.artifact("spirv_cross").getEmittedBin(),
+                );
+            }
         }
     }
 
@@ -613,21 +613,21 @@ pub fn add(
     // cimgui (terminal inspector only)
     if (self.config.inspector) {
         if (b.lazyDependency("dcimgui", .{
-        .target = target,
-        .optimize = optimize,
-        .freetype = true,
-        .@"backend-metal" = target.result.os.tag.isDarwin(),
-        .@"backend-osx" = target.result.os.tag == .macos,
-        // OpenGL3 backend should only be built on non-Apple targets.
-        // Apple platforms use Metal (and macOS may also use the OSX backend).
-        .@"backend-opengl3" = !target.result.os.tag.isDarwin(),
-    })) |dep| {
-        step.root_module.addImport("dcimgui", dep.module("dcimgui"));
-        step.root_module.linkLibrary(dep.artifact("dcimgui"));
-        try static_libs.append(
-            b.allocator,
-            dep.artifact("dcimgui").getEmittedBin(),
-        );
+            .target = target,
+            .optimize = optimize,
+            .freetype = true,
+            .@"backend-metal" = target.result.os.tag.isDarwin(),
+            .@"backend-osx" = target.result.os.tag == .macos,
+            // OpenGL3 backend should only be built on non-Apple targets.
+            // Apple platforms use Metal (and macOS may also use the OSX backend).
+            .@"backend-opengl3" = !target.result.os.tag.isDarwin(),
+        })) |dep| {
+            step.root_module.addImport("dcimgui", dep.module("dcimgui"));
+            step.root_module.linkLibrary(dep.artifact("dcimgui"));
+            try static_libs.append(
+                b.allocator,
+                dep.artifact("dcimgui").getEmittedBin(),
+            );
         }
     }
 
@@ -847,24 +847,19 @@ fn buildStaticWayland(
     protocol_c.addFileArg(wayland_dep.path("protocol/wayland.xml"));
     const protocol_c_out = protocol_c.addOutputFileArg("wayland-protocol.c");
 
-    const source_names = [_][]const u8{
+    const header_names = [_][]const u8{
         "wayland-util.h",
         "wayland-os.h",
         "wayland-private.h",
         "wayland-client-core.h",
         "wayland-client.h",
     };
-    const header_paths: [source_names.len]std.Build.LazyPath = blk: {
-        var paths: [source_names.len]std.Build.LazyPath = undefined;
-        for (source_names, 0..) |name, i| {
-            paths[i] = generated.addCopyFile(
-                wayland_dep.path(b.fmt("src/{s}", .{name})),
-                b.fmt("src/{s}", .{name}),
-            );
-        }
-        break :blk paths;
-    };
-    _ = header_paths;
+    for (header_names) |name| {
+        _ = generated.addCopyFile(
+            wayland_dep.path(b.fmt("src/{s}", .{name})),
+            b.fmt("src/{s}", .{name}),
+        );
+    }
 
     const source_files = [_][]const u8{
         "wayland-client.c",
