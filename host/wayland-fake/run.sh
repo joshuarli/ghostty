@@ -33,6 +33,7 @@ build() {
 	wayland-scanner private-code "$protocols/stable/xdg-shell/xdg-shell.xml" "$work/xdg-shell-protocol.c"
 	wayland-scanner server-header "$protocols/unstable/text-input/text-input-unstable-v3.xml" "$work/text-input-server-protocol.h"
 	wayland-scanner private-code "$protocols/unstable/text-input/text-input-unstable-v3.xml" "$work/text-input-protocol.c"
+	# shellcheck disable=SC2046
 	cc -O0 -o "$work/compositor" "$here/compositor.c" "$work/xdg-shell-protocol.c" "$work/text-input-protocol.c" \
 		-I"$work" $(pkg-config --cflags --libs wayland-server)
 }
@@ -43,7 +44,7 @@ start() {
 	rm -rf "$dir"
 	mkdir -p "$dir/xdg"
 	chmod 700 "$dir/xdg"
-	export XDG_RUNTIME_DIR=$dir/xdg
+	export XDG_RUNTIME_DIR="$dir/xdg"
 	"$work/compositor" "$scenario" fake-0 "$dir" 2> "$dir/compositor.log" &
 	compositor=$!
 	i=0
