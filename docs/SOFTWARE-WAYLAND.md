@@ -96,9 +96,11 @@ GLib/GObject/GIO, X11, D-Bus clients, portals, systemd integration, desktop
 notifications, global-shortcut services, quick-terminal UI, theme monitoring,
 the inspector GUI, EGL, OpenGL, Vulkan, GBM, libdrm, and shader compilers.
 
-Clipboard data is held in memory for the terminal session. The profile does not
-yet implement `wl_data_device` clipboard transfer or text-input-v3 IME. Both
-degrade to ordinary key events when absent.
+The system clipboard is served through `wl_data_device`: text from other
+Wayland clients can be pasted and copies are advertised to the compositor.
+Only the standard clipboard is supported; primary selection is not. The profile
+does not implement text-input-v3 IME, so composition degrades to ordinary key
+events when absent.
 
 The profile needs a Wayland compositor, fonts discoverable by Fontconfig,
 compose data when used, a shell, and a PTY device. Static linkage does not

@@ -11,6 +11,7 @@ const wp = wayland.client.wp;
 const seat_mod = @import("seat.zig");
 const Seat = seat_mod.Seat;
 const SeatEvents = seat_mod.SeatEvents;
+const Clipboard = @import("clipboard.zig").Clipboard;
 
 const log = std.log.scoped(.wayland);
 
@@ -20,6 +21,8 @@ pub const Globals = struct {
     wm_base: ?*xdg.WmBase = null,
     seat: ?*wl.Seat = null,
     seat_name: ?u32 = null,
+    data_device_manager: ?*wl.DataDeviceManager = null,
+    data_device_manager_name: ?u32 = null,
     fractional_manager: ?*wp.FractionalScaleManagerV1 = null,
     viewporter: ?*wp.Viewporter = null,
 
@@ -38,6 +41,8 @@ pub const Connection = struct {
     globals: Globals,
     seat: ?*Seat,
     seat_events: SeatEvents,
+    clipboard: ?Clipboard = null,
+    poll_fds: std.ArrayListUnmanaged(posix.pollfd) = .empty,
     wake_fd: posix.fd_t,
     alloc: Allocator,
 
@@ -59,6 +64,7 @@ pub const Connection = struct {
             .alloc = alloc,
         };
         errdefer if (self.seat) |st| st.deinit();
+        errdefer if (self.clipboard) |*clipboard| clipboard.deinit();
         registry.setListener(*Connection, onRegistryEvent, self);
         try roundtrip(self);
         try roundtrip(self);
@@ -68,10 +74,15 @@ pub const Connection = struct {
     }
 
     pub fn disconnect(self: *Connection) void {
+        if (self.clipboard) |*clipboard| {
+            clipboard.deinit();
+            self.clipboard = null;
+        }
         if (self.seat) |st| st.deinit();
         self.seat = null;
         if (self.globals.wm_base) |v| v.destroy();
         if (self.globals.seat) |v| v.release();
+        if (self.globals.data_device_manager) |v| v.destroy();
         if (self.globals.shm) |v| v.destroy();
         if (self.globals.compositor) |v| v.destroy();
         if (self.globals.fractional_manager) |v| v.destroy();
@@ -79,6 +90,7 @@ pub const Connection = struct {
         self.registry.destroy();
         self.display.disconnect();
         _ = libc.close(self.wake_fd);
+        self.poll_fds.deinit(self.alloc);
         self.globals.deinit();
     }
 
@@ -102,29 +114,67 @@ pub const Connection = struct {
                 return error.FlushFailed;
             },
         }
-        var fds = [_]posix.pollfd{
-            .{ .fd = self.display.getFd(), .events = linux.POLL.IN, .revents = 0 },
-            .{ .fd = self.wake_fd, .events = linux.POLL.IN, .revents = 0 },
-        };
-        _ = posix.poll(&fds, timeout_ms) catch |err| {
+        self.poll_fds.clearRetainingCapacity();
+        try self.poll_fds.append(self.alloc, .{
+            .fd = self.display.getFd(),
+            .events = linux.POLL.IN,
+            .revents = 0,
+        });
+        try self.poll_fds.append(self.alloc, .{
+            .fd = self.wake_fd,
+            .events = linux.POLL.IN,
+            .revents = 0,
+        });
+        if (self.clipboard) |*clipboard| {
+            try clipboard.appendPollFds(self.alloc, &self.poll_fds);
+        }
+        _ = posix.poll(self.poll_fds.items, timeout_ms) catch |err| {
             self.display.cancelRead();
             return err;
         };
-        if (fds[0].revents & linux.POLL.IN != 0) {
+        if (self.poll_fds.items[0].revents & linux.POLL.IN != 0) {
             if (self.display.readEvents() != .SUCCESS) return error.ReadFailed;
         } else {
             self.display.cancelRead();
-            if (fds[0].revents & (linux.POLL.HUP | linux.POLL.ERR) != 0) return error.ConnectionLost;
+            if (self.poll_fds.items[0].revents & (linux.POLL.HUP | linux.POLL.ERR) != 0) return error.ConnectionLost;
         }
-        if (fds[1].revents & linux.POLL.IN != 0) {
+        if (self.poll_fds.items[1].revents & linux.POLL.IN != 0) {
             var count: u64 = 0;
             _ = libc.read(self.wake_fd, std.mem.asBytes(&count), @sizeOf(u64));
         }
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+        if (self.clipboard) |*clipboard| clipboard.service();
     }
 
     pub fn flush(self: *Connection) void {
         _ = self.display.flush();
+    }
+
+    pub fn clipboardState(self: *Connection) ?*Clipboard {
+        if (self.clipboard) |*clipboard| return clipboard;
+        return null;
+    }
+
+    pub fn serial(self: *const Connection) u32 {
+        return if (self.seat) |seat| seat.last_serial else 0;
+    }
+
+    fn initClipboard(self: *Connection) !void {
+        if (self.clipboard != null) return;
+        const manager = self.globals.data_device_manager orelse return;
+        const seat = self.seat orelse return;
+
+        self.clipboard = .{
+            .alloc = self.alloc,
+            .manager = manager,
+            .seat = seat,
+        };
+        if (self.clipboard) |*clipboard| {
+            clipboard.init() catch |err| {
+                self.clipboard = null;
+                return err;
+            };
+        }
     }
 };
 
@@ -146,6 +196,10 @@ fn onRegistryEvent(
         },
         .global_remove => |g| {
             if (conn.globals.seat_name == @as(?u32, g.name)) {
+                if (conn.clipboard) |*clipboard| {
+                    clipboard.deinit();
+                    conn.clipboard = null;
+                }
                 if (conn.seat) |st| {
                     st.deinit();
                     conn.seat = null;
@@ -155,6 +209,17 @@ fn onRegistryEvent(
                     conn.globals.seat = null;
                 }
                 conn.globals.seat_name = null;
+            }
+            if (conn.globals.data_device_manager_name == @as(?u32, g.name)) {
+                if (conn.clipboard) |*clipboard| {
+                    clipboard.deinit();
+                    conn.clipboard = null;
+                }
+                if (conn.globals.data_device_manager) |v| {
+                    v.destroy();
+                    conn.globals.data_device_manager = null;
+                }
+                conn.globals.data_device_manager_name = null;
             }
         },
     }
@@ -193,6 +258,16 @@ fn bindGlobal(
         conn.globals.seat = wl_seat;
         conn.globals.seat_name = name;
         conn.seat = try Seat.init(conn.alloc, wl_seat, conn.seat_events);
+        try conn.initClipboard();
+    } else if (std.mem.eql(u8, span, "wl_data_device_manager")) {
+        if (conn.globals.data_device_manager != null) return;
+        conn.globals.data_device_manager = try registry.bind(
+            name,
+            wl.DataDeviceManager,
+            @min(version, 3),
+        );
+        conn.globals.data_device_manager_name = name;
+        try conn.initClipboard();
     } else if (std.mem.eql(u8, span, "wp_fractional_scale_manager_v1")) {
         if (conn.globals.fractional_manager != null) return;
         conn.globals.fractional_manager = try registry.bind(

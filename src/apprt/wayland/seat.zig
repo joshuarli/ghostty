@@ -29,6 +29,7 @@ pub const Seat = struct {
     pointer: ?*wl.Pointer = null,
     events: SeatEvents,
     mods: input.Mods = .{},
+    last_serial: u32 = 0,
 
     xkb_ctx: ?*xkbcommon.xkb_context = null,
     xkb_keymap: ?*xkbcommon.xkb_keymap = null,
@@ -182,14 +183,15 @@ fn onKeyboardEvent(
             self.updateMods();
         },
         .enter => |e| {
-            _ = e;
+            self.last_serial = e.serial;
             if (self.events.focus_fn) |f| f(self.events.focus_ud, true);
         },
         .leave => |e| {
-            _ = e;
+            self.last_serial = e.serial;
             if (self.events.focus_fn) |f| f(self.events.focus_ud, false);
         },
         .key => |k| {
+            self.last_serial = k.serial;
             const state = self.xkb_state orelse return;
             const keycode = k.key + 8;
             const action: input.Action = if (k.state == .pressed) .press else .release;
@@ -225,6 +227,7 @@ fn onKeyboardEvent(
             if (self.events.key_fn) |f| _ = f(self.events.key_ud, ev);
         },
         .modifiers => |m| {
+            self.last_serial = m.serial;
             if (self.xkb_state) |st| {
                 _ = xkbcommon.xkb_state_update_mask(
                     st,
@@ -260,6 +263,7 @@ fn onPointerEvent(    ptr: *wl.Pointer,
     _ = ptr;
     switch (event) {
         .enter => |e| {
+            self.last_serial = e.serial;
             self.pointer_x = e.surface_x.toDouble();
             self.pointer_y = e.surface_y.toDouble();
             if (self.events.cursor_fn) |f| f(self.events.cursor_ud, self.pointer_x, self.pointer_y, self.mods);
@@ -274,6 +278,7 @@ fn onPointerEvent(    ptr: *wl.Pointer,
             if (self.events.cursor_fn) |f| f(self.events.cursor_ud, self.pointer_x, self.pointer_y, self.mods);
         },
         .button => |b| {
+            self.last_serial = b.serial;
             const btn: input.MouseButton = switch (b.button) {
                 272 => .left,
                 273 => .right,

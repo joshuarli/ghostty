@@ -18,7 +18,6 @@ title: ?[:0]const u8,
 size: apprt.SurfaceSize,
 content_scale: apprt.ContentScale,
 cursor_pos: apprt.CursorPos,
-clipboard_text: ?[]u8,
 pending_frame: ?renderer.Renderer.ExportedFrame,
 
 pub fn init(self: *Surface, app: *ApprtApp) !void {
@@ -30,7 +29,6 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
         .size = .{ .width = 800, .height = 600 },
         .content_scale = .{ .x = 1, .y = 1 },
         .cursor_pos = .{ .x = -1, .y = -1 },
-        .clipboard_text = null,
         .pending_frame = null,
     };
     try app.core_app.addSurface(self);
@@ -69,12 +67,13 @@ pub fn init(self: *Surface, app: *ApprtApp) !void {
 }
 
 pub fn deinit(self: *Surface) void {
+    if (self.app.conn) |conn| {
+        if (conn.clipboardState()) |clipboard| clipboard.cancel(self);
+    }
     if (self.pending_frame) |frame| frame.deinit();
     self.pending_frame = null;
     if (self.title) |v| self.app.core_app.alloc.free(v);
     self.title = null;
-    if (self.clipboard_text) |v| self.app.core_app.alloc.free(v);
-    self.clipboard_text = null;
     if (self.window) |win| {
         win.destroy();
         self.window = null;
@@ -121,11 +120,9 @@ pub fn supportsClipboard(
     self: *const Surface,
     clipboard_type: apprt.Clipboard,
 ) bool {
-    _ = self;
-    return switch (clipboard_type) {
-        .standard => true,
-        .selection, .primary => false,
-    };
+    if (clipboard_type != .standard) return false;
+    const conn = self.app.conn orelse return false;
+    return conn.clipboardState() != null;
 }
 
 pub fn clipboardRequest(
@@ -133,40 +130,32 @@ pub fn clipboardRequest(
     clipboard_type: apprt.Clipboard,
     state: apprt.ClipboardRequest,
 ) !apprt.ClipboardReadResult {
-    _ = clipboard_type;
+    if (clipboard_type != .standard) return .unsupported;
+
+    const conn = self.app.conn orelse return .unsupported;
+    const clipboard = conn.clipboardState() orelse return .unsupported;
+
     switch (state) {
-        .paste => {
-            const text = self.clipboard_text orelse return .unavailable;
-            const contents = [_]@import("../../terminal/main.zig").clipboard.Content{
-                .{ .mime = "text/plain", .data = text },
-            };
+        .paste, .osc_52_read => {
+            return clipboard.read(state, self, clipboardReadComplete);
+        },
+        .list => {
+            const mimes = clipboard.list() orelse return .unavailable;
+            const alloc = self.app.core_app.alloc;
+            const available = try alloc.alloc([]const u8, mimes.len);
+            defer alloc.free(available);
+            for (mimes, available) |mime, *out| out.* = mime;
+
             self.core_surface.completeClipboardRequest(state, .{
-                .contents = &contents,
-                .available = &.{ "text/plain" },
+                .available = available,
                 .confirmed = true,
-                .remember = false,
             }) catch |err| {
-                log.warn("complete paste failed err={}", .{err});
+                log.warn("complete paste event failed err={}", .{err});
                 return .unavailable;
             };
             return .started;
         },
-        .osc_52_read => {
-            const text = self.clipboard_text orelse return .unavailable;
-            const contents = [_]@import("../../terminal/main.zig").clipboard.Content{
-                .{ .mime = "text/plain", .data = text },
-            };
-            self.core_surface.completeClipboardRequest(state, .{
-                .contents = &contents,
-                .available = &.{ "text/plain" },
-                .confirmed = true,
-                .remember = false,
-            }) catch return .unavailable;
-            return .started;
-        },
-        .list => return .unsupported,
-        .kitty_read, .kitty_write => return .unsupported,
-        .osc_52_write => return .unsupported,
+        .kitty_read, .kitty_write, .osc_52_write => return .unsupported,
     }
 }
 
@@ -176,20 +165,26 @@ pub fn setClipboard(
     contents: []const apprt.ClipboardContent,
     confirm: bool,
 ) !void {
-    _ = clipboard_type;
+    if (clipboard_type != .standard) return;
     _ = confirm;
-    const alloc = self.app.core_app.alloc;
-    if (self.clipboard_text) |v| alloc.free(v);
-    self.clipboard_text = null;
-    for (contents) |c| {
-        if (std.mem.eql(u8, c.mime, "text/plain")) {
-            self.clipboard_text = try alloc.dupe(u8, c.data);
-            break;
-        }
-    }
-    if (self.clipboard_text == null and contents.len > 0) {
-        self.clipboard_text = try alloc.dupe(u8, contents[0].data);
-    }
+
+    const conn = self.app.conn orelse return error.NoWaylandConnection;
+    const clipboard = conn.clipboardState() orelse return error.ClipboardUnavailable;
+    try clipboard.set(contents, conn.serial());
+}
+
+fn clipboardReadComplete(
+    ud: ?*anyopaque,
+    req: apprt.ClipboardRequest,
+    data: [:0]const u8,
+) void {
+    const self: *Surface = @ptrCast(@alignCast(ud orelse return));
+    self.core_surface.completeClipboardRequest(req, .{
+        .contents = &.{.{ .mime = "text/plain", .data = data }},
+        .confirmed = true,
+    }) catch |err| {
+        log.warn("complete clipboard read failed err={}", .{err});
+    };
 }
 
 pub fn handleKey(self: *Surface, event: input.KeyEvent) bool {
