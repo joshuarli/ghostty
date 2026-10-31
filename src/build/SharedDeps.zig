@@ -792,6 +792,7 @@ fn addWayland(
     scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
     scanner.addSystemProtocol("staging/xdg-activation/xdg-activation-v1.xml");
     scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
+    scanner.addSystemProtocol("unstable/text-input/text-input-unstable-v3.xml");
 
     scanner.generate("wl_compositor", 4);
     scanner.generate("wl_seat", 9);
@@ -800,6 +801,7 @@ fn addWayland(
     scanner.generate("xdg_wm_base", 6);
     scanner.generate("wp_fractional_scale_manager_v1", 1);
     scanner.generate("wp_viewporter", 1);
+    scanner.generate("zwp_text_input_manager_v3", 1);
     scanner.generate("zwp_linux_dmabuf_v1", 4);
     scanner.generate("xdg_activation_v1", 1);
 
