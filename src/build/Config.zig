@@ -30,6 +30,7 @@ font_backend: FontBackend = .freetype,
 /// Feature flags
 x11: bool = false,
 wayland: bool = false,
+inspector: bool = true,
 sentry: bool = true,
 simd: bool = true,
 i18n: bool = true,
@@ -208,8 +209,23 @@ pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Conf
     config.renderer = b.option(
         RendererBackend,
         "renderer",
-        "The app runtime to use. Not all values supported on all platforms.",
+        "The renderer backend to use. Not all values supported on all platforms.",
     ) orelse RendererBackend.default(target.result, wasm_target);
+
+    config.inspector = b.option(
+        bool,
+        "inspector",
+        "Build the desktop terminal inspector. Disabled by default for the software renderer.",
+    ) orelse (config.renderer != .software);
+
+    if (config.renderer == .software) {
+        if (config.app_runtime != .wayland) {
+            @panic("-Drenderer=software requires -Dapp-runtime=wayland");
+        }
+        if (target.result.os.tag != .linux) {
+            @panic("-Drenderer=software is only supported on Linux");
+        }
+    }
 
     //---------------------------------------------------------------
     // Feature Flags
@@ -689,6 +705,7 @@ pub fn addOptions(self: *const Config, step: *std.Build.Step.Options) !void {
     step.addOption(bool, "snap", self.snap);
     step.addOption(bool, "x11", self.x11);
     step.addOption(bool, "wayland", self.wayland);
+    step.addOption(bool, "inspector", self.inspector);
     step.addOption(bool, "sentry", self.sentry);
     step.addOption(bool, "simd", self.simd);
     step.addOption(bool, "i18n", self.i18n);
@@ -798,6 +815,7 @@ pub fn fromOptions() Config {
         .wasm_target = std.meta.stringToEnum(WasmTarget, @tagName(options.wasm_target)).?,
         .wasm_shared = options.wasm_shared,
         .i18n = options.i18n,
+        .inspector = options.inspector,
     };
 }
 

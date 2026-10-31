@@ -1,7 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
-const cimgui = @import("dcimgui");
+const build_config = @import("../build_config.zig");
+const cimgui = if (build_config.inspector) @import("dcimgui") else struct {
+    pub const c = struct {};
+};
 
 pub const Mods = @import("key_mods.zig").Mods;
 
