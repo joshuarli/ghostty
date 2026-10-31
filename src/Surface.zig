@@ -21,6 +21,7 @@ const assert = @import("quirks.zig").inlineAssert;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const global = @import("global.zig");
+const build_config = @import("build_config.zig");
 const oni = @import("oniguruma");
 const simd = @import("simd/main.zig");
 const crash = @import("crash/main.zig");
@@ -35,7 +36,10 @@ const Duration = configpkg.Config.Duration;
 const input = @import("input.zig");
 const App = @import("App.zig");
 const internal_os = @import("os/main.zig");
-const inspectorpkg = @import("inspector/main.zig");
+const inspectorpkg = if (build_config.inspector)
+    @import("inspector/main.zig")
+else
+    @import("inspector/noop.zig");
 const SurfaceMouse = @import("surface_mouse.zig");
 const ProcessInfo = @import("pty.zig").ProcessInfo;
 

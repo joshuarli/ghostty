@@ -96,6 +96,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
         pub const ExportedFrame = if (@hasDecl(GraphicsAPI, "ExportedFrame")) GraphicsAPI.ExportedFrame else void;
 
+        pub const supports_custom_shaders = if (@hasDecl(GraphicsAPI, "supports_custom_shaders"))
+            GraphicsAPI.supports_custom_shaders
+        else
+            true;
+
         /// Whether +Y is down in the coordinate space of exported
         /// frames. Apprts use this to orient frames when presenting.
         pub const custom_shader_y_is_down = GraphicsAPI.custom_shader_y_is_down;
@@ -734,7 +739,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             );
             errdefer api.deinit();
 
-            const has_custom_shaders = options.config.custom_shaders.value.items.len > 0;
+            const configured_custom_shaders = options.config.custom_shaders.value.items.len > 0;
+            if (configured_custom_shaders and !supports_custom_shaders) {
+                log.warn("custom shaders are unsupported by this renderer; ignoring them", .{});
+            }
+            const has_custom_shaders = supports_custom_shaders and configured_custom_shaders;
 
             // Create the font shaper.
             var font_shaper = try font.Shaper.init(alloc, .{
@@ -894,15 +903,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             defer arena.deinit();
             const arena_alloc = arena.allocator();
 
-            // Load our custom shaders
-            const custom_shaders: []const [:0]const u8 = shadertoy.loadFromFiles(
-                arena_alloc,
-                self.config.custom_shaders,
-                GraphicsAPI.custom_shader_target,
-            ) catch |err| err: {
-                log.warn("error loading custom shaders err={}", .{err});
-                break :err &.{};
-            };
+            // Load our custom shaders. Backends such as software rasterization
+            // deliberately do not compile GLSL.
+            const custom_shaders: []const [:0]const u8 = if (comptime supports_custom_shaders)
+                shadertoy.loadFromFiles(
+                    arena_alloc,
+                    self.config.custom_shaders,
+                    GraphicsAPI.custom_shader_target,
+                ) catch |err| err: {
+                    log.warn("error loading custom shaders err={}", .{err});
+                    break :err &.{};
+                }
+            else
+                &.{};
 
             const has_custom_shaders = custom_shaders.len > 0;
 

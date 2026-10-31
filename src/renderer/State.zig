@@ -5,7 +5,11 @@ const State = @This();
 const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
-const Inspector = @import("../inspector/main.zig").Inspector;
+const build_config = @import("../build_config.zig");
+const Inspector = if (build_config.inspector)
+    @import("../inspector/main.zig").Inspector
+else
+    @import("../inspector/noop.zig").Inspector;
 const terminalpkg = @import("../terminal/main.zig");
 const inputpkg = @import("../input.zig");
 const renderer = @import("../renderer.zig");
