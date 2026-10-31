@@ -3337,6 +3337,9 @@ keybind: Keybinds = .{},
 /// The default is `/System/Library/Sounds/Glass.aiff` on macOS and unset
 /// on other platforms.
 ///
+/// On the Wayland runtime (Linux, ALSA), the file must be an uncompressed PCM
+/// or float WAV file, and an unset path plays a short built-in tone.
+///
 /// Available since: 1.2.0 on GTK, 1.3.0 on macOS.
 @"bell-audio-path": ?Path = switch (builtin.target.os.tag) {
     .macos => .{ .required = "/System/Library/Sounds/Glass.aiff" },
@@ -3353,7 +3356,8 @@ keybind: Keybinds = .{},
 /// Play a mechanical keyboard sound for physical key presses while Ghostty
 /// is the active application. The sound follows the application that is
 /// running, including shortcuts and native UI, and stops when Ghostty is
-/// not active. This only plays on macOS. Other platforms accept the value
+/// not active. This plays on macOS and on the Wayland runtime on Linux, where
+/// it uses ALSA directly; see `sound-device`. Other platforms accept the value
 /// and do not start audio.
 ///
 /// Valid values:
@@ -3365,20 +3369,33 @@ keybind: Keybinds = .{},
 /// Loudness of `keyboard-sound`, from 0.0 (silent) to 1.0 (full volume),
 /// up to 2.0 (boosted). The default is 1.0. Perceived loudness follows
 /// a squared gain curve. Values outside 0.0...2.0, and non-finite values,
-/// are rejected. This only has an effect on macOS.
+/// are rejected. This only has an effect on macOS and the Wayland runtime.
 @"keyboard-sound-volume": KeyboardSoundVolume = .{},
 
 /// Play a sample when a physical key is released. The default is true. This
-/// only has an effect on macOS.
+/// only has an effect on macOS and the Wayland runtime.
 @"keyboard-sound-release": bool = true,
 
 /// Apply a small random gain and pitch change to each sample. The default is
-/// true. This only has an effect on macOS.
+/// true. This only has an effect on macOS and the Wayland runtime.
 @"keyboard-sound-variation": bool = true,
 
 /// Place each key in the stereo field according to its physical position on
-/// the keyboard. The default is true. This only has an effect on macOS.
+/// the keyboard. The default is true. This only has an effect on macOS and the
+/// Wayland runtime.
 @"keyboard-sound-spatial": bool = true,
+
+/// The ALSA playback device for keyboard sound and the bell on the Wayland
+/// runtime, written `hw:CARD,DEVICE` with numbers as listed by
+/// `/proc/asound/cards` and `/proc/asound/pcm`, for example `hw:1,0`. When
+/// unset, the first free playback device that is not an HDMI or DisplayPort
+/// output is used.
+///
+/// Ghostty talks to the device directly, without a sound server or mixing
+/// plugin, so it cannot play while another program holds the device open, and
+/// it releases the device a couple of seconds after the last sound. This only
+/// has an effect on the Wayland runtime.
+@"sound-device": ?[:0]const u8 = null,
 
 /// Control the in-app notifications that Ghostty shows.
 ///
