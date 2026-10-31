@@ -1,6 +1,6 @@
 KEYMAPOPTS=none
 HOSTNAMEOPTS=waylandvm
-DEVDOPTS=mdev
+DEVDOPTS=udev
 INTERFACESOPTS="auto lo
 iface lo inet loopback
 
