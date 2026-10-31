@@ -1,9 +1,16 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const posix = std.posix;
+const linux = std.os.linux;
+const libc = std.c;
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const xdg = wayland.client.xdg;
 const wp = wayland.client.wp;
+
+const seat_mod = @import("seat.zig");
+const Seat = seat_mod.Seat;
+const SeatEvents = seat_mod.SeatEvents;
 
 const log = std.log.scoped(.wayland);
 
@@ -20,32 +27,48 @@ pub const Globals = struct {
     }
 };
 
+/// The Wayland connection. It is initialized in place because the
+/// registry listener keeps a pointer to it for the connection's lifetime,
+/// and it creates the seat at bind time so the seat's initial
+/// capabilities event reaches a listener.
 pub const Connection = struct {
     display: *wl.Display,
     registry: *wl.Registry,
     globals: Globals,
+    seat: ?*Seat,
+    seat_events: SeatEvents,
+    wake_fd: posix.fd_t,
     alloc: Allocator,
 
-    pub fn connect(alloc: Allocator) !Connection {
+    pub fn connect(self: *Connection, alloc: Allocator, seat_events: SeatEvents) !void {
         const display = try wl.Display.connect(null);
         errdefer display.disconnect();
         const registry = try display.getRegistry();
-        var self = Connection{
+        errdefer registry.destroy();
+        const wake_fd = libc.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
+        if (wake_fd < 0) return error.EventFdFailed;
+        errdefer _ = libc.close(wake_fd);
+        self.* = .{
             .display = display,
             .registry = registry,
             .globals = .{},
+            .seat = null,
+            .seat_events = seat_events,
+            .wake_fd = wake_fd,
             .alloc = alloc,
         };
-        registry.setListener(*Connection, onRegistryEvent, &self);
-        try roundtrip(&self);
-        try roundtrip(&self);
+        errdefer if (self.seat) |st| st.deinit();
+        registry.setListener(*Connection, onRegistryEvent, self);
+        try roundtrip(self);
+        try roundtrip(self);
         if (self.globals.compositor == null) return error.NoCompositor;
         if (self.globals.shm == null) return error.NoShm;
         if (self.globals.wm_base == null) return error.NoXdgWmBase;
-        return self;
     }
 
     pub fn disconnect(self: *Connection) void {
+        if (self.seat) |st| st.deinit();
+        self.seat = null;
         if (self.globals.wm_base) |v| v.destroy();
         if (self.globals.seat) |v| v.release();
         if (self.globals.shm) |v| v.destroy();
@@ -54,11 +77,49 @@ pub const Connection = struct {
         if (self.globals.viewporter) |v| v.destroy();
         self.registry.destroy();
         self.display.disconnect();
+        _ = libc.close(self.wake_fd);
         self.globals.deinit();
     }
 
-    pub fn dispatchPending(self: *Connection) void {
-        _ = self.display.dispatchPending();
+    /// Wake a `wait` in progress. Safe to call from any thread.
+    pub fn wake(self: *Connection) void {
+        const one: u64 = 1;
+        _ = libc.write(self.wake_fd, std.mem.asBytes(&one), @sizeOf(u64));
+    }
+
+    /// Dispatch queued events, then block until the compositor sends more,
+    /// `wake` is called, or `timeout_ms` passes, and dispatch what arrived.
+    /// Fails when the compositor connection is lost.
+    pub fn wait(self: *Connection, timeout_ms: i32) !void {
+        while (!self.display.prepareRead()) {
+            if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+        }
+        switch (self.display.flush()) {
+            .SUCCESS, .AGAIN => {},
+            else => {
+                self.display.cancelRead();
+                return error.FlushFailed;
+            },
+        }
+        var fds = [_]posix.pollfd{
+            .{ .fd = self.display.getFd(), .events = linux.POLL.IN, .revents = 0 },
+            .{ .fd = self.wake_fd, .events = linux.POLL.IN, .revents = 0 },
+        };
+        _ = posix.poll(&fds, timeout_ms) catch |err| {
+            self.display.cancelRead();
+            return err;
+        };
+        if (fds[0].revents & linux.POLL.IN != 0) {
+            if (self.display.readEvents() != .SUCCESS) return error.ReadFailed;
+        } else {
+            self.display.cancelRead();
+            if (fds[0].revents & (linux.POLL.HUP | linux.POLL.ERR) != 0) return error.ConnectionLost;
+        }
+        if (fds[1].revents & linux.POLL.IN != 0) {
+            var count: u64 = 0;
+            _ = libc.read(self.wake_fd, std.mem.asBytes(&count), @sizeOf(u64));
+        }
+        if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
     }
 
     pub fn flush(self: *Connection) void {
@@ -115,7 +176,9 @@ fn bindGlobal(
         conn.globals.wm_base = wm;
     } else if (std.mem.eql(u8, span, "wl_seat")) {
         if (conn.globals.seat != null) return;
-        conn.globals.seat = try registry.bind(name, wl.Seat, @min(version, 9));
+        const wl_seat: *wl.Seat = try registry.bind(name, wl.Seat, @min(version, 9));
+        conn.globals.seat = wl_seat;
+        conn.seat = try Seat.init(conn.alloc, wl_seat, conn.seat_events);
     } else if (std.mem.eql(u8, span, "wp_fractional_scale_manager_v1")) {
         if (conn.globals.fractional_manager != null) return;
         conn.globals.fractional_manager = try registry.bind(
