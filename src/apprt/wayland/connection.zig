@@ -38,6 +38,12 @@ pub const Globals = struct {
     }
 };
 
+pub const OutputInfo = struct {
+    output: *wl.Output,
+    name: u32,
+    scale: i32 = 1,
+};
+
 /// The Wayland connection. It is initialized in place because the
 /// registry listener keeps a pointer to it for the connection's lifetime,
 /// and it creates the seat at bind time so the seat's initial
@@ -46,6 +52,7 @@ pub const Connection = struct {
     display: *wl.Display,
     registry: *wl.Registry,
     globals: Globals,
+    outputs: std.ArrayListUnmanaged(*OutputInfo) = .empty,
     seat: ?*Seat,
     seat_events: SeatEvents,
     clipboard: ?Clipboard = null,
@@ -97,6 +104,11 @@ pub const Connection = struct {
         }
         if (self.seat) |st| st.deinit();
         self.seat = null;
+        for (self.outputs.items) |info| {
+            info.output.release();
+            self.alloc.destroy(info);
+        }
+        self.outputs.deinit(self.alloc);
         if (self.globals.wm_base) |v| v.destroy();
         if (self.globals.seat) |v| v.release();
         if (self.globals.data_device_manager) |v| v.destroy();
@@ -235,6 +247,13 @@ fn onRegistryEvent(
             };
         },
         .global_remove => |g| {
+            for (conn.outputs.items, 0..) |info, i| {
+                if (info.name != g.name) continue;
+                info.output.release();
+                conn.alloc.destroy(info);
+                _ = conn.outputs.swapRemove(i);
+                break;
+            }
             if (conn.globals.seat_name == @as(?u32, g.name)) {
                 conn.deinitTextInput();
                 if (conn.clipboard) |*clipboard| {
@@ -287,8 +306,17 @@ fn bindGlobal(
         conn.globals.compositor = try registry.bind(
             name,
             wl.Compositor,
-            @min(version, 4),
+            @min(version, 6),
         );
+    } else if (std.mem.eql(u8, span, "wl_output")) {
+        if (version < 2) return;
+        const info = try conn.alloc.create(OutputInfo);
+        errdefer conn.alloc.destroy(info);
+        const output = try registry.bind(name, wl.Output, @min(version, 3));
+        errdefer output.release();
+        info.* = .{ .output = output, .name = name };
+        try conn.outputs.append(conn.alloc, info);
+        output.setListener(*OutputInfo, onOutputEvent, info);
     } else if (std.mem.eql(u8, span, "wl_shm")) {
         if (conn.globals.shm != null) return;
         const shm = try registry.bind(name, wl.Shm, @min(version, 1));
@@ -346,6 +374,13 @@ fn bindGlobal(
     }
 }
 
+fn onOutputEvent(_: *wl.Output, event: wl.Output.Event, info: *OutputInfo) void {
+    switch (event) {
+        .scale => |s| info.scale = s.factor,
+        else => {},
+    }
+}
+
 fn onShmEvent(_: *wl.Shm, event: wl.Shm.Event, globals: *Globals) void {
     switch (event) {
         .format => |f| switch (f.format) {
@@ -365,4 +400,11 @@ fn onWmBaseEvent(
     switch (event) {
         .ping => |p| wm.pong(p.serial),
     }
+}
+
+pub fn outputScale(conn: *const Connection, output: *wl.Output) ?i32 {
+    for (conn.outputs.items) |info| {
+        if (info.output == output) return info.scale;
+    }
+    return null;
 }

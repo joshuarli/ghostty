@@ -307,11 +307,9 @@ pub fn present(self: *Surface) void {
         self.app.running = false;
         return;
     }
+    win.refreshScale();
     if (win.pixelWidth() != self.size.width or win.pixelHeight() != self.size.height) {
         self.updateSize(win.pixelWidth(), win.pixelHeight());
-    }
-    if (win.viewport) |vp| {
-        vp.setDestination(@intCast(win.width), @intCast(win.height));
     }
     const s: f64 = win.scale();
     if (@abs(s - self.content_scale.x) > 0.001) {
