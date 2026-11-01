@@ -9,6 +9,7 @@ const xdg = wayland.client.xdg;
 const wp = wayland.client.wp;
 const zwp = wayland.client.zwp;
 
+const shm_format = @import("shm_format.zig");
 const seat_mod = @import("seat.zig");
 const Seat = seat_mod.Seat;
 const SeatEvents = seat_mod.SeatEvents;
@@ -21,7 +22,7 @@ const log = std.log.scoped(.wayland);
 pub const Globals = struct {
     compositor: ?*wl.Compositor = null,
     shm: ?*wl.Shm = null,
-    shm_abgr8888: bool = false,
+    shm_formats: shm_format.Advertised = .{},
     wm_base: ?*xdg.WmBase = null,
     seat: ?*wl.Seat = null,
     seat_name: ?u32 = null,
@@ -84,7 +85,7 @@ pub const Connection = struct {
         try roundtrip(self);
         if (self.globals.compositor == null) return error.NoCompositor;
         if (self.globals.shm == null) return error.NoShm;
-        if (!self.globals.shm_abgr8888) return error.NoShmAbgr8888;
+        if (shm_format.Format.select(self.globals.shm_formats) == null) return error.NoShmFormat;
         if (self.globals.wm_base == null) return error.NoXdgWmBase;
     }
 
@@ -347,8 +348,10 @@ fn bindGlobal(
 
 fn onShmEvent(_: *wl.Shm, event: wl.Shm.Event, globals: *Globals) void {
     switch (event) {
-        .format => |f| if (f.format == .abgr8888) {
-            globals.shm_abgr8888 = true;
+        .format => |f| switch (f.format) {
+            .abgr8888 => globals.shm_formats.abgr8888 = true,
+            .argb8888 => globals.shm_formats.argb8888 = true,
+            else => {},
         },
     }
 }
