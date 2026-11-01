@@ -8,6 +8,7 @@ const xdg = wayland.client.xdg;
 const wp = wayland.client.wp;
 
 const Connection = @import("connection.zig").Connection;
+const shm_format = @import("shm_format.zig");
 
 const log = std.log.scoped(.wayland);
 
@@ -167,7 +168,7 @@ pub const Window = struct {
 
         const incremental = self.incrementalDamage(slot, revision, damage);
         errdefer slot.has_revision = false;
-        copyFrame(slot.data[0..expected], pixels[0..expected], width, height, row_order, incremental);
+        copyFrame(slot.data[0..expected], pixels[0..expected], width, height, row_order, incremental, slot.format);
 
         self.surface.attach(slot.buffer, 0, 0);
         if (incremental) |rects| {
@@ -300,6 +301,7 @@ fn copyFrame(
     height: u32,
     row_order: RowOrder,
     repair: ?[]const DamageRect,
+    format: shm_format.Format,
 ) void {
     const stride = @as(usize, width) * 4;
     switch (row_order) {
@@ -307,18 +309,18 @@ fn copyFrame(
             var row: usize = 0;
             while (row < height) : (row += 1) {
                 const dst_off = (height - 1 - row) * stride;
-                @memcpy(dst[dst_off..][0..stride], src[row * stride ..][0..stride]);
+                format.convertRow(dst[dst_off..][0..stride], src[row * stride ..][0..stride]);
             }
         },
         .top_down => {
-            const rects = repair orelse return @memcpy(dst, src);
+            const rects = repair orelse return format.convertRow(dst, src);
             for (rects) |rect| {
                 const clipped = rect.clipped(width, height) orelse continue;
                 const row_bytes = @as(usize, clipped.width) * 4;
                 var row: usize = clipped.y;
                 while (row < clipped.bottom()) : (row += 1) {
                     const off = row * stride + @as(usize, clipped.x) * 4;
-                    @memcpy(dst[off..][0..row_bytes], src[off..][0..row_bytes]);
+                    format.convertRow(dst[off..][0..row_bytes], src[off..][0..row_bytes]);
                 }
             }
         },
@@ -334,6 +336,7 @@ const BufferSlot = struct {
     width: u32,
     height: u32,
     busy: bool,
+    format: shm_format.Format,
     revision: u64 = 0,
     has_revision: bool = false,
 
@@ -363,6 +366,8 @@ const BufferSlot = struct {
         errdefer posix.munmap(data);
 
         const shm = window.conn.globals.shm orelse return error.NoShm;
+        const format = shm_format.Format.select(window.conn.globals.shm_formats) orelse
+            return error.NoShmFormat;
         const pool = try shm.createPool(fd, @intCast(size));
         errdefer pool.destroy();
         const buffer = try pool.createBuffer(
@@ -370,7 +375,10 @@ const BufferSlot = struct {
             @intCast(width),
             @intCast(height),
             @intCast(stride),
-            wl.Shm.Format.abgr8888,
+            switch (format) {
+                .abgr8888 => wl.Shm.Format.abgr8888,
+                .argb8888 => wl.Shm.Format.argb8888,
+            },
         );
 
         self.* = .{
@@ -382,6 +390,7 @@ const BufferSlot = struct {
             .width = width,
             .height = height,
             .busy = false,
+            .format = format,
         };
         buffer.setListener(*BufferSlot, onBufferRelease, self);
         return self;
@@ -501,7 +510,7 @@ test "top-down repair copies only the damaged rectangle" {
     var src: [dst.len]u8 = undefined;
     @memset(&src, 7);
     const damage = [_]DamageRect{.{ .x = 1, .y = 1, .width = 2, .height = 1 }};
-    copyFrame(&dst, &src, 4, 3, .top_down, &damage);
+    copyFrame(&dst, &src, 4, 3, .top_down, &damage, .abgr8888);
 
     for (dst, 0..) |byte, i| {
         const pixel = i / 4;
@@ -514,13 +523,25 @@ test "top-down without repair regions copies the whole frame" {
     var dst: [16]u8 = @splat(0);
     var src: [16]u8 = undefined;
     for (&src, 0..) |*byte, i| byte.* = @intCast(i);
-    copyFrame(&dst, &src, 2, 2, .top_down, null);
+    copyFrame(&dst, &src, 2, 2, .top_down, null, .abgr8888);
     try std.testing.expectEqualSlices(u8, &src, &dst);
 }
 
 test "bottom-up source is flipped into top-down rows" {
     var dst: [16]u8 = @splat(0);
     const src = [_]u8{ 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4 };
-    copyFrame(&dst, &src, 2, 2, .bottom_up, null);
+    copyFrame(&dst, &src, 2, 2, .bottom_up, null, .abgr8888);
     try std.testing.expectEqualSlices(u8, &.{ 3, 3, 3, 3, 4, 4, 4, 4, 1, 1, 1, 1, 2, 2, 2, 2 }, &dst);
+}
+
+test "argb8888 conversion applies to flipped and repaired rows" {
+    const src = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    var flipped: [8]u8 = undefined;
+    copyFrame(&flipped, &src, 1, 2, .bottom_up, null, .argb8888);
+    try std.testing.expectEqualSlices(u8, &.{ 7, 6, 5, 8, 3, 2, 1, 4 }, &flipped);
+
+    var repaired: [8]u8 = @splat(0);
+    const damage = [_]DamageRect{.{ .x = 0, .y = 1, .width = 1, .height = 1 }};
+    copyFrame(&repaired, &src, 1, 2, .top_down, &damage, .argb8888);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0, 7, 6, 5, 8 }, &repaired);
 }
