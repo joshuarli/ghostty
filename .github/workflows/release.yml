@@ -137,7 +137,7 @@ jobs:
         shell: sh
         run: |
           apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig tar zstd \
-            libxkbcommon-dev libxkbcommon-static libffi-dev ncurses
+            wayland-dev libxkbcommon-dev libxkbcommon-static libffi-dev ncurses
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
