@@ -7,6 +7,7 @@ test {
     _ = @import("wayland/clipboard.zig");
     _ = @import("wayland/connection.zig");
     _ = @import("wayland/key_repeat.zig");
+    _ = @import("wayland/scale.zig");
     _ = @import("wayland/seat.zig");
     _ = @import("wayland/shm_format.zig");
     _ = @import("wayland/text_input.zig");

@@ -7,7 +7,9 @@ const wl = wayland.client.wl;
 const xdg = wayland.client.xdg;
 const wp = wayland.client.wp;
 
-const Connection = @import("connection.zig").Connection;
+const connection = @import("connection.zig");
+const Connection = connection.Connection;
+const scale_mod = @import("scale.zig");
 const shm_format = @import("shm_format.zig");
 
 const log = std.log.scoped(.wayland);
@@ -40,6 +42,9 @@ pub const Window = struct {
     fractional: ?*wp.FractionalScaleV1,
     viewport: ?*wp.Viewport,
     scale_num: u32,
+    fractional_num: ?u32 = null,
+    preferred_integer: ?i32 = null,
+    entered_outputs: std.ArrayListUnmanaged(*wl.Output) = .empty,
     configured: bool,
     /// Logical surface size in surface-local coordinates.
     width: u32,
@@ -94,7 +99,19 @@ pub const Window = struct {
         xdg_surface.setListener(*Window, onXdgSurfaceEvent, self);
         toplevel.setListener(*Window, onToplevelEvent, self);
 
-        if (conn.globals.fractional_manager) |mgr| {
+        if (conn.globals.viewporter) |vp| {
+            const port: ?*wp.Viewport = vp.getViewport(surface) catch |err| blk: {
+                log.warn("getViewport failed err={}", .{err});
+                break :blk null;
+            };
+            self.viewport = port;
+        }
+        surface.setListener(*Window, onSurfaceEvent, self);
+        if (scale_mod.Mode.select(
+            conn.globals.fractional_manager != null,
+            self.viewport != null,
+        ) == .fractional) {
+            const mgr = conn.globals.fractional_manager.?;
             const frac: ?*wp.FractionalScaleV1 = mgr.getFractionalScale(surface) catch |err| blk: {
                 log.warn("fractional_scale failed err={}", .{err});
                 break :blk null;
@@ -103,13 +120,6 @@ pub const Window = struct {
                 f.setListener(*Window, onFractionalEvent, self);
                 self.fractional = f;
             }
-        }
-        if (conn.globals.viewporter) |vp| {
-            const port: ?*wp.Viewport = vp.getViewport(surface) catch |err| blk: {
-                log.warn("getViewport failed err={}", .{err});
-                break :blk null;
-            };
-            self.viewport = port;
         }
 
         var i: usize = 0;
@@ -120,12 +130,14 @@ pub const Window = struct {
             self.width = 800;
             self.height = 600;
         }
+        self.refreshScale();
         return self;
     }
 
     pub fn destroy(self: *Window) void {
         for (self.buffers.items) |slot| slot.destroy(self.alloc);
         self.buffers.deinit(self.alloc);
+        self.entered_outputs.deinit(self.alloc);
         if (self.fractional) |f| f.destroy();
         if (self.viewport) |v| v.destroy();
         self.toplevel.destroy();
@@ -139,13 +151,36 @@ pub const Window = struct {
     }
 
     pub fn pixelWidth(self: *const Window) u32 {
-        const scaled = @as(f64, @floatFromInt(self.width)) * self.scale();
-        return @max(1, @as(u32, @intFromFloat(@round(scaled))));
+        return scale_mod.bufferExtent(self.width, self.scale_num);
     }
 
     pub fn pixelHeight(self: *const Window) u32 {
-        const scaled = @as(f64, @floatFromInt(self.height)) * self.scale();
-        return @max(1, @as(u32, @intFromFloat(@round(scaled))));
+        return scale_mod.bufferExtent(self.height, self.scale_num);
+    }
+
+    pub fn refreshScale(self: *Window) void {
+        const mode: scale_mod.Mode = if (self.fractional != null) .fractional else .integer;
+        var scales: [8]i32 = undefined;
+        var count: usize = 0;
+        for (self.entered_outputs.items) |output| {
+            const factor = connection.outputScale(self.conn, output) orelse continue;
+            if (count == scales.len) break;
+            scales[count] = factor;
+            count += 1;
+        }
+        const integer = scale_mod.integerScale(self.preferred_integer, scales[0..count]);
+        self.scale_num = scale_mod.numerator(mode, self.fractional_num, integer);
+    }
+
+    fn integerScale(self: *const Window) u32 {
+        return self.scale_num / scale_mod.numerator_unit;
+    }
+
+    fn applyScale(self: *Window) void {
+        if (self.viewport) |vp| vp.setDestination(@intCast(self.width), @intCast(self.height));
+        if (self.fractional == null and self.surface.getVersion() >= wl.Surface.set_buffer_scale_since_version) {
+            self.surface.setBufferScale(@intCast(self.integerScale()));
+        }
     }
 
     pub fn presentMemory(
@@ -162,6 +197,12 @@ pub const Window = struct {
         const stride = std.math.mul(usize, width, 4) catch return error.ShmBufferTooLarge;
         const expected = std.math.mul(usize, stride, height) catch return error.ShmBufferTooLarge;
         if (pixels.len < expected) return error.ShortFrame;
+        if (self.fractional == null and self.viewport == null) {
+            const n = self.integerScale();
+            if (!scale_mod.isMultipleOf(width, n) or !scale_mod.isMultipleOf(height, n)) {
+                return error.StaleFrameScale;
+            }
+        }
 
         const slot = try self.acquireSlot(width, height);
         errdefer slot.busy = false;
@@ -170,6 +211,7 @@ pub const Window = struct {
         errdefer slot.has_revision = false;
         copyFrame(slot.data[0..expected], pixels[0..expected], width, height, row_order, incremental, slot.format);
 
+        self.applyScale();
         self.surface.attach(slot.buffer, 0, 0);
         if (incremental) |rects| {
             if (self.surface.getVersion() >= wl.Surface.damage_buffer_since_version) {
@@ -466,8 +508,41 @@ fn onFractionalEvent(
     _ = frac;
     switch (event) {
         .preferred_scale => |s| {
-            if (s.scale > 0) win.scale_num = s.scale;
+            if (s.scale > 0) {
+                win.fractional_num = s.scale;
+                win.refreshScale();
+            }
         },
+    }
+}
+
+fn onSurfaceEvent(
+    surface: *wl.Surface,
+    event: wl.Surface.Event,
+    win: *Window,
+) void {
+    _ = surface;
+    switch (event) {
+        .enter => |e| if (e.output) |output| {
+            win.entered_outputs.append(win.alloc, output) catch |err| {
+                log.warn("track entered output failed err={}", .{err});
+                return;
+            };
+            win.refreshScale();
+        },
+        .leave => |e| if (e.output) |output| {
+            for (win.entered_outputs.items, 0..) |entered, i| {
+                if (entered != output) continue;
+                _ = win.entered_outputs.swapRemove(i);
+                break;
+            }
+            win.refreshScale();
+        },
+        .preferred_buffer_scale => |e| {
+            win.preferred_integer = e.factor;
+            win.refreshScale();
+        },
+        .preferred_buffer_transform => {},
     }
 }
 

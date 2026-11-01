@@ -794,7 +794,8 @@ fn addWayland(
     scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
     scanner.addSystemProtocol("unstable/text-input/text-input-unstable-v3.xml");
 
-    scanner.generate("wl_compositor", 4);
+    scanner.generate("wl_compositor", 6);
+    scanner.generate("wl_output", 3);
     scanner.generate("wl_seat", 9);
     scanner.generate("wl_shm", 1);
     scanner.generate("wl_data_device_manager", 3);
