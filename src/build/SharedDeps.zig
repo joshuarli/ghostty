@@ -242,7 +242,6 @@ pub fn add(
         );
 
         if (b.systemIntegrationOption("freetype", .{})) {
-            step.root_module.linkSystemLibrary("bzip2", dynamic_link_opts);
             step.root_module.linkSystemLibrary("freetype2", dynamic_link_opts);
         } else {
             step.root_module.linkLibrary(freetype_dep.artifact("freetype"));
