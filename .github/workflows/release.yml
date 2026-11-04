@@ -87,7 +87,7 @@ jobs:
         shell: sh
         run: |
           apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig tar zstd \
-            wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses
+            wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses freetype-dev harfbuzz-dev fontconfig-dev
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
@@ -100,15 +100,20 @@ jobs:
       - name: Build Laputa Wayland binary
         run: |
           zig build -Dapp-runtime=wayland -Doptimize=ReleaseFast -Dstrip=true \
-            -Demit-themes=false -Di18n=false -Dcpu=baseline
+            -Demit-themes=false -Di18n=false -Dcpu=baseline -Dfont-backend=fontconfig_freetype \
+            -fsys=freetype -fsys=harfbuzz -fsys=fontconfig -fsys=libpng -fsys=zlib
 
-      - name: Verify musl static-ish binary
+      - name: Verify musl shared-font binary
         run: |
           file zig-out/bin/ghostty | tee file.txt
           grep -q "ELF 64-bit LSB.*x86-64" file.txt
           grep -q "musl" file.txt || readelf -l zig-out/bin/ghostty | grep -q "ld-musl-x86_64"
           readelf -d zig-out/bin/ghostty | tee dyn.txt
-          test "$(grep -c NEEDED dyn.txt)" -le 5
+          test "$(grep -c NEEDED dyn.txt)" -le 8
+          for soname in libfreetype.so.6 libharfbuzz.so.0 libfontconfig.so.1; do
+            awk -v lib="$soname" 'index($0, "[" lib "]") && /NEEDED/ { found=1 } END { exit !found }' dyn.txt
+          done
+          test -z "$(awk '/\(RPATH\)|\(RUNPATH\)/ { print }' dyn.txt)"
           ! grep NEEDED dyn.txt | grep -Ei "gtk|adwaita|glib|X11|libGL\.|libc\.so\.6"
           ./zig-out/bin/ghostty --version | grep -q "wayland"
           ./zig-out/bin/ghostty +show-config > /dev/null
@@ -185,7 +190,7 @@ jobs:
 
       # JS actions cannot run inside Alpine containers on ARM runners, so the
       # musl build runs in Alpine via docker CLI from the Ubuntu host. This
-      # keeps the same mostly-static musl artifact as x86_64.
+      # keeps the same shared-font musl configuration as x86_64.
       - name: Build Laputa Wayland binary in Alpine
         run: |
           docker run --rm --platform linux/arm64 \
@@ -194,19 +199,24 @@ jobs:
             alpine:edge sh -c '
               set -ex
               apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig tar zstd curl \
-                wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses
+                wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses freetype-dev harfbuzz-dev fontconfig-dev
               curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.17.0/zig-aarch64-linux-0.17.0.tar.xz
               mkdir -p /opt && tar -xf /tmp/zig.tar.xz -C /opt
               export PATH=/opt/zig-aarch64-linux-0.17.0:$PATH
               zig version
               zig build -Dapp-runtime=wayland -Doptimize=ReleaseFast -Dstrip=true \
-                -Demit-themes=false -Di18n=false -Dcpu=baseline > /tmp/build.log 2>&1
+                -Demit-themes=false -Di18n=false -Dcpu=baseline -Dfont-backend=fontconfig_freetype \
+                -fsys=freetype -fsys=harfbuzz -fsys=fontconfig -fsys=libpng -fsys=zlib > /tmp/build.log 2>&1
               tail -50 /tmp/build.log
               file zig-out/bin/ghostty | tee file.txt
               grep -q "ELF 64-bit LSB.*aarch64" file.txt
               grep -q "musl" file.txt || readelf -l zig-out/bin/ghostty | grep -q "ld-musl-aarch64"
               readelf -d zig-out/bin/ghostty | tee dyn.txt
-              test "$(grep -c NEEDED dyn.txt)" -le 5
+              test "$(grep -c NEEDED dyn.txt)" -le 8
+              for soname in libfreetype.so.6 libharfbuzz.so.0 libfontconfig.so.1; do
+                awk -v lib="$soname" '"'"'index($0, "[" lib "]") && /NEEDED/ { found=1 } END { exit !found }'"'"' dyn.txt
+              done
+              test -z "$(awk '"'"'/\(RPATH\)|\(RUNPATH\)/ { print }'"'"' dyn.txt)"
               ! grep NEEDED dyn.txt | grep -Ei "gtk|adwaita|glib|X11|libGL\.|libc\.so\.6"
               # Baseline CPU only: a native-CPU build (e.g. SVE2 on Neoverse
               # N2 runners) dies with SIGILL on CPUs without those features.
@@ -260,7 +270,7 @@ jobs:
               --prerelease \
               --target "$GITHUB_SHA" \
               --title "$RELEASE_TAG" \
-              --notes "Ad-hoc signed macOS arm64 build and musl Laputa Wayland builds (x86_64, aarch64) and a fully static x86_64 software-rendered Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux tarballs hold mostly-static musl binaries (dynamic libEGL, libwayland-client, libxkbcommon only); the software tarball is fully static. Run them under any Wayland compositor."
+              --notes "Ad-hoc signed macOS arm64 build and musl Laputa Wayland builds (x86_64, aarch64) and a fully static x86_64 software-rendered Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux GPU tarballs require shared FreeType, HarfBuzz, Fontconfig, libEGL, libwayland-client and libxkbcommon; the software tarball is fully static. Run them under any Wayland compositor."
           fi
 
       - name: Publish versioned release
@@ -277,5 +287,5 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "${{ inputs.release_tag }}" \
-              --notes "Ad-hoc signed macOS arm64 build and musl Laputa Wayland builds (x86_64, aarch64) and a fully static x86_64 software-rendered Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux tarballs hold mostly-static musl binaries (dynamic libEGL, libwayland-client, libxkbcommon only); the software tarball is fully static. Run them under any Wayland compositor."
+              --notes "Ad-hoc signed macOS arm64 build and musl Laputa Wayland builds (x86_64, aarch64) and a fully static x86_64 software-rendered Wayland build of Ghostty Custom at commit $GITHUB_SHA. macOS is not notarized; not an official Ghostty release. Open the .dmg, drag to Applications, then right-click > Open once. The Linux GPU tarballs require shared FreeType, HarfBuzz, Fontconfig, libEGL, libwayland-client and libxkbcommon; the software tarball is fully static. Run them under any Wayland compositor."
           fi
