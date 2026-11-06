@@ -17,6 +17,7 @@ const internal_os = @import("../os/main.zig");
 const renderer = @import("../renderer.zig");
 const terminal = @import("../terminal/main.zig");
 const sound = @import("../sound.zig");
+const sound_control = @import("../sound/control.zig");
 const CoreApp = @import("../App.zig");
 const CoreInspector = @import("../inspector/main.zig").Inspector;
 const CoreSurface = @import("../Surface.zig");
@@ -153,6 +154,10 @@ pub const App = struct {
     /// Keyboard sound owned by this app. Null when the feature is off.
     sound: ?*sound.Sound = null,
 
+    // This state outlives sound recreation on configuration reload.
+    mute_state: sound_control.mute.State = .{},
+    mute_server: ?*sound_control.Server = null,
+
     pub fn init(
         self: *App,
         core_app: *CoreApp,
@@ -171,10 +176,14 @@ pub const App = struct {
             .keymap = null,
             .sound = null,
         };
+        if (comptime builtin.os.tag == .macos)
+            self.mute_server = sound_control.start(&self.mute_state);
         self.syncSound();
     }
 
     pub fn terminate(self: *App) void {
+        sound_control.stop(self.mute_server);
+        self.mute_server = null;
         self.stopSound();
         if (self.keymap) |*v| v.deinit();
         self.config.deinit();
@@ -200,6 +209,7 @@ pub const App = struct {
             .spatial = self.config.@"keyboard-sound-spatial",
             .focused = self.core_app.focused,
             .enabled = true,
+            .mute_state = &self.mute_state,
         };
         if (self.sound) |keyboard| {
             keyboard.apply(settings);

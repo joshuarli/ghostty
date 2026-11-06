@@ -14,11 +14,15 @@ pub const DetectError = error{
 pub fn detectArgs(comptime E: type, alloc: Allocator, args: std.process.Args) !?E {
     var iter = try args.iterateAllocator(alloc);
     defer iter.deinit();
+    // Positional subcommands must never match argv[0] (an executable name).
+    if (@hasDecl(E, "detectSubcommand")) _ = iter.next();
     return try detectIter(E, &iter);
 }
 
 /// Detect the action from any iterator. Each iterator value should yield
-/// a CLI argument such as "--foo".
+/// a CLI argument such as "--foo". For enums exposing detectSubcommand,
+/// the iterator must exclude argv[0]; only its first value can be a bare
+/// subcommand. Later positional values and commands after -e cannot match.
 ///
 /// The comptime type E must be an enum with the available actions.
 /// If the type E has a decl `detectSpecialCase`, then it will be called
@@ -33,7 +37,17 @@ pub fn detectIter(
 ) DetectError!?E {
     var fallback: ?E = null;
     var pending: ?E = null;
+    var first = true;
     while (iter.next()) |arg| {
+        if (first) {
+            first = false;
+            if (@hasDecl(E, "detectSubcommand")) {
+                if (E.detectSubcommand(arg)) |subcommand| {
+                    pending = subcommand;
+                    continue;
+                }
+            }
+        }
         // Allow handling of special cases.
         if (@hasDecl(E, "detectSpecialCase")) special: {
             const special = E.detectSpecialCase(arg) orelse break :special;

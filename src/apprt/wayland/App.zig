@@ -7,6 +7,7 @@ const Config = configpkg.Config;
 const input = @import("../../input.zig");
 const keycodes = @import("../../input/keycodes.zig");
 const soundpkg = @import("../../sound.zig");
+const sound_control = @import("../../sound/control.zig");
 const Surface = @import("Surface.zig");
 const Connection = @import("connection.zig").Connection;
 const text_input = @import("text_input.zig");
@@ -21,6 +22,8 @@ conn: ?*Connection,
 running: bool,
 surface: ?*Surface,
 sound: ?*soundpkg.Sound = null,
+mute_state: sound_control.mute.State = .{},
+mute_server: ?*sound_control.Server = null,
 
 pub fn init(self: *App, core_app: *CoreApp, opts: struct {}) !void {
     _ = opts;
@@ -41,6 +44,8 @@ pub fn terminate(self: *App) void {
 }
 
 fn teardown(self: *App) void {
+    sound_control.stop(self.mute_server);
+    self.mute_server = null;
     self.stopSound();
     if (self.surface) |s| {
         self.surface = null;
@@ -70,6 +75,7 @@ pub fn wait(self: *const App) !void {
 pub fn run(self: *App) !void {
     defer self.teardown();
     try self.connect();
+    self.mute_server = sound_control.start(&self.mute_state);
     self.startSound();
     self.running = true;
     try self.newWindow();
@@ -106,6 +112,7 @@ fn startSound(self: *App) void {
         .spatial = config.@"keyboard-sound-spatial",
         .focused = false,
         .enabled = keys,
+        .mute_state = &self.mute_state,
         .bell = .{
             .enabled = bell,
             .volume = @floatCast(config.@"bell-audio-volume"),

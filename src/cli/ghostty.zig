@@ -23,11 +23,12 @@ const boo = @import("boo.zig");
 const new_window = @import("new_window.zig");
 const new_tab = @import("new_tab.zig");
 const toggle_quick_terminal = @import("toggle_quick_terminal.zig");
+const mute = @import("mute.zig");
 const global = @import("../global.zig");
 
 /// Special commands that can be invoked via CLI flags. These are all
-/// invoked by using `+<action>` as a CLI flag. The only exception is
-/// "version" which can be invoked additionally with `--version`.
+/// invoked by using `+<action>` as a CLI flag. "version" also accepts
+/// `--version`, and "mute" accepts the bare `ghostty mute` subcommand.
 pub const Action = enum {
     /// Output the version and exit
     version,
@@ -85,6 +86,13 @@ pub const Action = enum {
 
     // Use IPC to tell the running Ghostty to toggle the quick terminal.
     @"toggle-quick-terminal",
+
+    /// Control runtime keyboard-sound muting.
+    mute,
+
+    pub fn detectSubcommand(arg: []const u8) ?Action {
+        return if (std.mem.eql(u8, arg, "mute")) .mute else null;
+    }
 
     pub fn detectSpecialCase(arg: []const u8) ?SpecialCase(Action) {
         // If we see a "-e" and we haven't seen a command yet, then
@@ -168,6 +176,7 @@ pub const Action = enum {
             .@"crash-report" => try crash_report.run(alloc),
             .@"show-face" => try show_face.run(alloc),
             .boo => try boo.run(alloc),
+            .mute => try mute.run(alloc),
             .@"new-window" => try new_window.run(alloc),
             .@"new-tab" => try new_tab.run(alloc),
             .@"toggle-quick-terminal" => try toggle_quick_terminal.run(alloc),
@@ -211,6 +220,7 @@ pub const Action = enum {
                 .@"crash-report" => crash_report.Options,
                 .@"show-face" => show_face.Options,
                 .boo => boo.Options,
+                .mute => mute.Options,
                 .@"new-window" => new_window.Options,
                 .@"new-tab" => new_tab.Options,
                 .@"toggle-quick-terminal" => toggle_quick_terminal.Options,
@@ -218,6 +228,22 @@ pub const Action = enum {
         }
     }
 };
+
+test "parse action mute only recognizes a leading subcommand" {
+    for ([_][]const u8{ "mute", "mute on", "mute --help", "+mute off", "+mute --help" }) |text| {
+        var iter = try std.process.Args.IteratorGeneral(.{}).init(std.testing.allocator, text);
+        defer iter.deinit();
+        try std.testing.expectEqual(Action.mute, (try actionpkg.detectIter(Action, &iter)).?);
+    }
+    for ([_][]const u8{ "-e mute", "-e sh -c mute", "--title=mute", "--title=x mute" }) |text| {
+        var iter = try std.process.Args.IteratorGeneral(.{}).init(std.testing.allocator, text);
+        defer iter.deinit();
+        try std.testing.expectEqual(@as(?Action, null), try actionpkg.detectIter(Action, &iter));
+    }
+    var iter = try std.process.Args.IteratorGeneral(.{}).init(std.testing.allocator, "mute +new-tab");
+    defer iter.deinit();
+    try std.testing.expectError(actionpkg.DetectError.MultipleActions, actionpkg.detectIter(Action, &iter));
+}
 
 test "parse action none" {
     const testing = std.testing;
