@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const mixer = @import("mixer.zig");
 const pack = @import("pack.zig");
+const mute = @import("mute.zig");
 
 pub const pitch_jitter_cents: f32 = 8;
 pub const gain_jitter_db: f32 = 0.4;
@@ -218,9 +219,12 @@ pub const Settings = struct {
     bell: Bell = .{},
     /// The playback device on Linux, as `hw:CARD,DEVICE`, or empty to choose one.
     device: []const u8 = "",
+    /// App-owned; must outlive the output. Configuration reloads never change it.
+    mute_state: ?*const mute.State = null,
 };
 
 pub const Shared = struct {
+    mute_state: ?*const mute.State = null,
     enabled: std.atomic.Value(bool) = .init(true),
     ghostty_active: std.atomic.Value(bool) = .init(false),
     release: std.atomic.Value(bool) = .init(true),
@@ -241,7 +245,7 @@ pub const Shared = struct {
     dropped: std.atomic.Value(u64) = .init(0),
 
     pub fn init(s: Settings) Shared {
-        var shared: Shared = .{};
+        var shared: Shared = .{ .mute_state = s.mute_state };
         shared.setVolume(s.volume);
         shared.enabled.store(s.enabled, .monotonic);
         shared.ghostty_active.store(s.focused, .release);
@@ -250,6 +254,10 @@ pub const Shared = struct {
         shared.spatial.store(s.spatial, .monotonic);
         shared.applyBell(s.bell);
         return shared;
+    }
+
+    pub fn muteSnapshot(self: *const Shared) mute.Snapshot {
+        return if (self.mute_state) |state| state.snapshot() else .{};
     }
 
     pub fn applyBell(self: *Shared, bell: Bell) void {
@@ -477,6 +485,7 @@ fn deviceBit(keycode: u8) ?u64 {
 
 pub const VoicedKeys = struct {
     bits: [2]u64 = .{ 0, 0 },
+    mute_generation: u64 = 0,
 
     pub fn press(self: *VoicedKeys, keycode: u8) void {
         if (keycode < 128) self.bits[keycode >> 6] |= @as(u64, 1) << @intCast(keycode & 63);
@@ -515,6 +524,13 @@ pub fn handleKey(
     autorepeat: bool,
     flags: u64,
 ) void {
+    const mute_generation = voicer.shared.muteSnapshot().generation;
+    if (voiced.mute_generation != mute_generation) {
+        // Preserve physical held/modifier state, but never emit a release
+        // for an attack from before a mute transition.
+        voiced.clear();
+        voiced.mute_generation = mute_generation;
+    }
     if (!voicer.shared.ghostty_active.load(.acquire)) {
         held.clear();
         voiced.clear();
@@ -615,6 +631,7 @@ pub fn Voicer(comptime capacity: usize) type {
         rng: Rng,
         pan: [128]f32,
         last_choice: [128]u16,
+        mute_generation: u64 = 0,
 
         pub fn init(
             shared: *Shared,
@@ -636,6 +653,9 @@ pub fn Voicer(comptime capacity: usize) type {
 
         pub fn key(self: *Self, keycode: u8, down: bool, ctrl_held: bool, cmd_held: bool, shift_held: bool) bool {
             _ = self.shared.key_events.fetchAdd(1, .monotonic);
+            const runtime_mute = self.shared.muteSnapshot();
+            self.mute_generation = runtime_mute.generation;
+            if (runtime_mute.muted) return false;
             if (!self.shared.enabled.load(.monotonic) or !self.shared.ghostty_active.load(.acquire)) return false;
             if (!down and !self.shared.release.load(.monotonic)) return false;
             if (down) if (specialVoice(keycode, ctrl_held, cmd_held, shift_held)) |voice| return self.queueSpecial(keycode, voice);
@@ -703,6 +723,7 @@ pub fn Voicer(comptime capacity: usize) type {
 
         fn emit(self: *Self, play: mixer.Play) bool {
             var queued = play;
+            if (!queued.bell) queued.mute_generation = self.mute_generation;
             queued.seq = self.shared.next_seq.fetchAdd(1, .monotonic);
             if (self.producer.push(queued)) {
                 _ = self.shared.plays.fetchAdd(1, .monotonic);
@@ -801,6 +822,67 @@ fn setup(alloc: std.mem.Allocator, with_release: bool) !*Harness {
 fn geom(keycode: u8) ?KeyGeom {
     for (keys) |key| if (key.code == keycode) return key;
     return null;
+}
+
+test "sound: mute gates keyboard emission without disabling bells" {
+    const h = try setup(std.testing.allocator, true);
+    defer h.deinit();
+    var runtime_mute: mute.State = .{};
+    h.shared.mute_state = &runtime_mute;
+    _ = runtime_mute.apply(.on);
+    try std.testing.expect(!h.voicer.key(code.a, true, false, false, false));
+    try std.testing.expectEqual(@as(?mixer.Play, null), h.consumer.pop());
+    h.shared.applyBell(.{ .enabled = true });
+    try std.testing.expect(h.voicer.ringBell(&tone, 44_100));
+    try std.testing.expect(h.consumer.pop().?.bell);
+
+    // A config update must not remove the runtime override.
+    h.shared.enabled.store(false, .monotonic);
+    h.shared.enabled.store(true, .monotonic);
+    try std.testing.expect(h.shared.muteSnapshot().muted);
+    try std.testing.expect(!h.voicer.key(code.a, true, false, false, false));
+    _ = runtime_mute.apply(.off);
+    h.shared.enabled.store(false, .monotonic);
+    try std.testing.expect(!h.voicer.key(code.a, true, false, false, false));
+    h.shared.enabled.store(true, .monotonic);
+    try std.testing.expect(h.voicer.key(code.a, true, false, false, false));
+    try std.testing.expectEqual(runtime_mute.snapshot().generation, h.consumer.pop().?.mute_generation);
+}
+
+test "sound: mute cycle suppresses an old held key release" {
+    const h = try setup(std.testing.allocator, true);
+    defer h.deinit();
+    var runtime_mute: mute.State = .{};
+    h.shared.mute_state = &runtime_mute;
+    var held: KeyState = .{};
+    var voiced: VoicedKeys = .{};
+    handleKey(&held, &voiced, &h.voicer, code.a, .down, false, 0);
+    try std.testing.expect(h.consumer.pop() != null);
+    _ = runtime_mute.apply(.on);
+    _ = runtime_mute.apply(.off);
+    handleKey(&held, &voiced, &h.voicer, code.a, .up, false, 0);
+    try std.testing.expectEqual(@as(?mixer.Play, null), h.consumer.pop());
+    try std.testing.expect(!held.isPressed(code.a));
+
+    _ = runtime_mute.apply(.on);
+    handleKey(&held, &voiced, &h.voicer, code.a, .down, false, 0);
+    try std.testing.expectEqual(@as(?mixer.Play, null), h.consumer.pop());
+    _ = runtime_mute.apply(.off);
+    handleKey(&held, &voiced, &h.voicer, code.a, .up, false, 0);
+    try std.testing.expectEqual(@as(?mixer.Play, null), h.consumer.pop());
+    handleKey(&held, &voiced, &h.voicer, code.a, .down, false, 0);
+    try std.testing.expect(h.consumer.pop() != null);
+}
+
+test "sound: mute state outlives sound recreation" {
+    var runtime_mute: mute.State = .{};
+    _ = runtime_mute.apply(.on);
+    const first = Shared.init(.{ .mute_state = &runtime_mute });
+    const recreated = Shared.init(.{ .mute_state = &runtime_mute, .volume = 0.8 });
+    try std.testing.expect(first.muteSnapshot().muted);
+    try std.testing.expect(recreated.muteSnapshot().muted);
+    _ = runtime_mute.apply(.off);
+    try std.testing.expect(!recreated.muteSnapshot().muted);
 }
 
 test "sound: rng zero seed still produces values" {

@@ -6,6 +6,7 @@
 const std = @import("std");
 const engine = @import("engine.zig");
 const mixer = @import("mixer.zig");
+const mute = @import("mute.zig");
 
 pub const RenderResult = struct {
     sounding: bool,
@@ -19,6 +20,7 @@ pub const RenderState = struct {
     mixer: mixer.Mixer,
     consumer: engine.PlayRing.Consumer,
     bell_mixer: mixer.Mixer = .init(48_000),
+    mute_generation: u64 = 0,
 
     pub fn setOutRate(self: *RenderState, rate: f64) void {
         self.mixer.setOutRate(rate);
@@ -35,7 +37,14 @@ const bell_block = 256;
 
 pub fn renderInto(state: *RenderState, left: []f32, right: []f32) RenderResult {
     const shared = state.shared;
-    const keys_on = shared.enabled.load(.monotonic) and shared.ghostty_active.load(.acquire);
+    const runtime_mute = shared.muteSnapshot();
+    if (runtime_mute.generation != state.mute_generation) {
+        // Clear only keyboard voices, including delayed chimes. The epoch
+        // catches a mute/unmute cycle between callbacks; the bell is untouched.
+        state.mixer.clear();
+        state.mute_generation = runtime_mute.generation;
+    }
+    const keys_on = !runtime_mute.muted and shared.enabled.load(.monotonic) and shared.ghostty_active.load(.acquire);
     const bell_on = shared.bell_enabled.load(.monotonic);
     const drop_before = shared.drop_before.load(.acquire);
     var fresh = false;
@@ -45,7 +54,9 @@ pub fn renderInto(state: *RenderState, left: []f32, right: []f32) RenderResult {
                 state.bell_mixer.start(&play);
                 fresh = true;
             }
-        } else if (keys_on and play.seq >= drop_before) {
+        } else if (keys_on and play.seq >= drop_before and
+            play.mute_generation == runtime_mute.generation)
+        {
             state.mixer.start(&play);
             fresh = true;
         }
@@ -175,6 +186,67 @@ test "a disabled bell is dropped" {
     const result = renderInto(&rig.state, &left, &right);
     try std.testing.expect(!result.fresh);
     try std.testing.expect(!result.sounding);
+}
+
+test "sound: mute clears active and queued keys but leaves the bell playing" {
+    var runtime_mute: mute.State = .{};
+    var shared = engine.Shared.init(.{
+        .volume = 1,
+        .focused = true,
+        .mute_state = &runtime_mute,
+        .bell = .{ .enabled = true, .volume = 0.5 },
+    });
+    var ring: engine.PlayRing.Shared = .{};
+    var rig = testState(&shared, &ring);
+    var left: [8]f32 = undefined;
+    var right: [8]f32 = undefined;
+    _ = renderInto(&rig.state, &left, &right);
+    const samples: [128]i16 = @splat(20_000);
+    try std.testing.expect(rig.producer.push(.{ .samples = &samples, .src_rate = 48_000 }));
+    try std.testing.expect(renderInto(&rig.state, &left, &right).sounding);
+    try std.testing.expect(rig.state.mixer.activeVoices() > 0);
+
+    _ = runtime_mute.apply(.on);
+    try std.testing.expect(rig.producer.push(.{ .samples = &samples, .src_rate = 48_000 }));
+    try std.testing.expect(rig.producer.push(.{ .samples = &samples, .src_rate = 48_000, .bell = true }));
+    const muted = renderInto(&rig.state, &left, &right);
+    try std.testing.expect(muted.sounding);
+    try std.testing.expectEqual(@as(usize, 0), rig.state.mixer.activeVoices());
+    try std.testing.expect(rig.state.bell_mixer.activeVoices() > 0);
+    try std.testing.expect(@abs(left[0]) > 0.01);
+    try std.testing.expect(@abs(left[0]) < 0.5);
+}
+
+test "sound: mute rapid on off cycle cannot replay queued or delayed clicks" {
+    var runtime_mute: mute.State = .{};
+    var shared = engine.Shared.init(.{ .volume = 1, .focused = true, .mute_state = &runtime_mute });
+    var ring: engine.PlayRing.Shared = .{};
+    var rig = testState(&shared, &ring);
+    var left: [8]f32 = undefined;
+    var right: [8]f32 = undefined;
+    _ = renderInto(&rig.state, &left, &right);
+    const samples: [128]i16 = @splat(20_000);
+    try std.testing.expect(rig.producer.push(.{ .samples = &samples, .src_rate = 48_000 }));
+    try std.testing.expect(renderInto(&rig.state, &left, &right).sounding);
+    try std.testing.expect(rig.producer.push(.{
+        .samples = &samples,
+        .src_rate = 48_000,
+        .delay_us = 70_000,
+    }));
+    // No renderer or input callback runs between these two transitions.
+    _ = runtime_mute.apply(.on);
+    _ = runtime_mute.apply(.off);
+    const quiet = renderInto(&rig.state, &left, &right);
+    try std.testing.expect(!quiet.fresh and !quiet.sounding);
+    try std.testing.expectEqual(@as(usize, 0), rig.state.mixer.activeVoices());
+    for (left) |sample| try std.testing.expectEqual(@as(f32, 0), sample);
+    for (right) |sample| try std.testing.expectEqual(@as(f32, 0), sample);
+    try std.testing.expect(rig.producer.push(.{
+        .samples = &samples,
+        .src_rate = 48_000,
+        .mute_generation = runtime_mute.snapshot().generation,
+    }));
+    try std.testing.expect(renderInto(&rig.state, &left, &right).sounding);
 }
 
 test "idle frames saturate on bad rates" {

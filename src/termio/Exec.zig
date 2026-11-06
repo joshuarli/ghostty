@@ -826,6 +826,18 @@ const Subprocess = struct {
             );
         }
 
+        // Reserved runtime identity: overwrite any inherited parent Ghostty
+        // PID so nested instances and multiple Wayland windows target the app
+        // that actually owns this terminal. No process-global setenv race.
+        if (comptime builtin.os.tag == .macos or
+            (builtin.os.tag == .linux and build_config.app_runtime == .wayland))
+        {
+            const mute_control = @import("../sound/control.zig");
+            var pid_buffer: [16]u8 = undefined;
+            const pid = std.fmt.bufPrint(&pid_buffer, "{d}", .{mute_control.pid()}) catch unreachable;
+            try env.put("GHOSTTY_MUTE_PID", pid);
+        }
+
         // Build our args list
         const args: []const [:0]const u8 = execCommand(
             alloc,

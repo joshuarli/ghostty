@@ -191,6 +191,18 @@ pub fn add(
     // Every exe needs the uucode module
     step.root_module.addImport("uucode", self.uucode_mod);
 
+    // A small libc/POSIX boundary shared by the CLI and native app runtimes.
+    // No additional package or sound-server dependency is introduced.
+    if (target.result.os.tag == .macos or target.result.os.tag == .linux) {
+        step.root_module.addCSourceFile(.{
+            .file = b.path("src/sound/control.c"),
+            .flags = &.{"-std=c11"},
+        });
+        step.root_module.link_libc = true;
+        if (target.result.os.tag == .linux)
+            step.root_module.linkSystemLibrary("pthread", .{});
+    }
+
     // C imports for locale constants and functions
     try translate_c.addImportToModule(b, "locale-c", step.root_module, .{
         .source = .{ .file = b.path("src/os/locale.c") },
