@@ -43,6 +43,9 @@ pub const Descriptor = struct {
     ///
     /// On systems that use fontconfig (Linux), this can be a full
     /// fontconfig pattern, such as "Fira Code-14:bold".
+    ///
+    /// The rust-fontconfig backend treats this as a plain family name, not
+    /// a Fontconfig pattern.
     family: ?[:0]const u8 = null,
 
     /// Specific font style to search for. This will filter the style
