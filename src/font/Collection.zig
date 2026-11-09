@@ -1158,7 +1158,8 @@ test hasCodepoint {
 }
 
 test "hasCodepoint emoji default graphical" {
-    if (options.backend != .fontconfig_freetype) return error.SkipZigTest;
+    if (options.backend != .fontconfig_freetype and
+        options.backend != .rust_fontconfig_freetype) return error.SkipZigTest;
 
     const testing = std.testing;
     const alloc = testing.allocator;

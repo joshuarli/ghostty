@@ -313,6 +313,10 @@ pub fn add(
         }
     }
 
+    if (self.config.font_backend.hasRustFontconfig()) {
+        step.root_module.linkSystemLibrary("rust-fontconfig", dynamic_link_opts);
+    }
+
     // Libpng - Ghostty doesn't actually use this directly, its only used
     // through dependencies, so we only need to add it to our static
     // libs list if we're not using system integration. The dependencies

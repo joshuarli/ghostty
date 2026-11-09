@@ -13,6 +13,7 @@ const Library = @import("main.zig").Library;
 const Presentation = @import("main.zig").Presentation;
 const Variation = @import("main.zig").face.Variation;
 const global = @import("../global.zig");
+const rust_fontconfig = @import("rust_fontconfig.zig");
 
 const log = std.log.scoped(.discovery);
 
@@ -21,6 +22,7 @@ pub const Discover = switch (options.backend) {
     .freetype => void, // no discovery
     .freetype_windows => Windows,
     .fontconfig_freetype => Fontconfig,
+    .rust_fontconfig_freetype => RustFontconfig,
     .web_canvas => void, // no discovery
     .coretext,
     .coretext_freetype,
@@ -339,6 +341,187 @@ pub const Fontconfig = struct {
                     .variations = self.variations,
                 },
             };
+        }
+    };
+};
+
+pub const RustFontconfig = struct {
+    lib: Library,
+    cache: ?rust_fontconfig.Cache,
+
+    pub fn init(lib: Library) RustFontconfig {
+        const cache = rust_fontconfig.Cache.init() catch |err| {
+            log.err("rust-fontconfig cache build failed err={}", .{err});
+            return .{ .lib = lib, .cache = null };
+        };
+        return .{ .lib = lib, .cache = cache };
+    }
+
+    pub fn deinit(self: *RustFontconfig) void {
+        if (self.cache) |*cache| cache.deinit();
+    }
+
+    pub fn discover(
+        self: *const RustFontconfig,
+        alloc: Allocator,
+        desc: Descriptor,
+    ) !DiscoverIterator {
+        const cache = &(self.cache orelse return error.FontDiscoveryUnavailable);
+
+        var stack: [2][*:0]const u8 = undefined;
+        var len: usize = 0;
+        if (desc.family) |family| {
+            stack[len] = family.ptr;
+            len += 1;
+        }
+        stack[len] = "monospace";
+        len += 1;
+
+        var chain = try cache.resolveChain(stack[0..len], .{
+            .bold = desc.bold,
+            .italic = desc.italic,
+        });
+        defer chain.deinit();
+
+        const ids = try chain.families(alloc);
+        errdefer alloc.free(ids);
+        if (desc.style) |style| try preferStyle(alloc, cache, ids, style);
+
+        return .{
+            .alloc = alloc,
+            .lib = self.lib,
+            .cache = cache,
+            .ids = ids,
+            .variations = desc.variations,
+            .i = 0,
+        };
+    }
+
+    pub fn discoverFallback(
+        self: *const RustFontconfig,
+        alloc: Allocator,
+        collection: *Collection,
+        desc: Descriptor,
+    ) !DiscoverIterator {
+        _ = collection;
+        const cp = std.math.cast(u21, desc.codepoint) orelse return error.InvalidCodepoint;
+        return try self.discoverCluster(alloc, &.{cp}, desc);
+    }
+
+    pub fn discoverCluster(
+        self: *const RustFontconfig,
+        alloc: Allocator,
+        cluster: []const u21,
+        desc: Descriptor,
+    ) !DiscoverIterator {
+        const cache = &(self.cache orelse return error.FontDiscoveryUnavailable);
+
+        var text: std.ArrayList(u8) = .empty;
+        defer text.deinit(alloc);
+        for (cluster) |cp| {
+            var encoded: [4]u8 = undefined;
+            const n = std.unicode.utf8Encode(cp, &encoded) catch continue;
+            try text.appendSlice(alloc, encoded[0..n]);
+        }
+        const text_z = try text.toOwnedSliceSentinel(alloc, 0);
+        defer alloc.free(text_z);
+
+        const stack = [_][*:0]const u8{ "monospace", "sans-serif" };
+        var chain = try cache.resolveChain(&stack, .{
+            .bold = desc.bold,
+            .italic = desc.italic,
+        });
+        defer chain.deinit();
+
+        var tag_buf: [rust_fontconfig.max_script_tags]u32 = undefined;
+        const candidates = try chain.candidates(
+            alloc,
+            text_z,
+            rust_fontconfig.scriptTags(cluster, &tag_buf),
+        );
+        defer alloc.free(candidates);
+
+        const ids = try alloc.alloc(rust_fontconfig.FontId, candidates.len);
+        errdefer alloc.free(ids);
+        for (candidates, ids) |candidate, *id| id.* = candidate.id;
+
+        return .{
+            .alloc = alloc,
+            .lib = self.lib,
+            .cache = cache,
+            .ids = ids,
+            .variations = desc.variations,
+            .i = 0,
+        };
+    }
+
+    fn preferStyle(
+        alloc: Allocator,
+        cache: *const rust_fontconfig.Cache,
+        ids: []rust_fontconfig.FontId,
+        style: []const u8,
+    ) !void {
+        var matching: usize = 0;
+        for (0..ids.len) |i| {
+            var font = try cache.font(alloc, ids[i]) orelse continue;
+            defer font.deinit(alloc);
+            const font_style = font.style orelse continue;
+            if (!std.ascii.eqlIgnoreCase(font_style, style)) continue;
+            std.mem.rotate(rust_fontconfig.FontId, ids[matching .. i + 1], i - matching);
+            matching += 1;
+        }
+    }
+
+    pub const DiscoverIterator = struct {
+        alloc: Allocator,
+        lib: Library,
+        cache: *const rust_fontconfig.Cache,
+        ids: []rust_fontconfig.FontId,
+        variations: []const Variation,
+        i: usize,
+
+        pub fn deinit(self: *DiscoverIterator) void {
+            self.alloc.free(self.ids);
+            self.* = undefined;
+        }
+
+        pub fn next(self: *DiscoverIterator) !?DeferredFace {
+            while (self.i < self.ids.len) {
+                const id = self.ids[self.i];
+                self.i += 1;
+
+                var found = try self.cache.font(self.alloc, id) orelse continue;
+                errdefer found.deinit(self.alloc);
+                if (found.style) |style| {
+                    self.alloc.free(style);
+                    found.style = null;
+                }
+
+                var peek = Face.initFile(
+                    self.lib,
+                    found.path,
+                    found.index,
+                    .{ .size = .{ .points = 12 } },
+                ) catch |err| {
+                    log.warn("skipping unreadable font path={s} err={}", .{ found.path, err });
+                    found.deinit(self.alloc);
+                    continue;
+                };
+                errdefer peek.deinit();
+
+                return .{ .rfc = .{
+                    .path = found.path,
+                    .face_index = found.index,
+                    .family = found.family,
+                    .full_name = found.full_name,
+                    .variations = self.variations,
+                    .presentation = if (peek.hasColor()) .emoji else .text,
+                    .peek = peek,
+                    .alloc = self.alloc,
+                } };
+            }
+
+            return null;
         }
     };
 };
@@ -1265,6 +1448,168 @@ test "fontconfig codepoint" {
 
     // Should have other codepoints too
     try testing.expect(face.hasCodepoint('B', null));
+}
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+
+pub const TestFonts = struct {
+    tmp: std.testing.TmpDir,
+
+    pub const Font = struct { file: []const u8, data: []const u8 };
+
+    pub fn init(alloc: Allocator, fonts: []const Font) !TestFonts {
+        var tmp = std.testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        for (fonts) |f| try tmp.dir.writeFile(std.testing.io, .{
+            .sub_path = f.file,
+            .data = f.data,
+        });
+
+        const root = try tmp.dir.realPathFileAlloc(std.testing.io, ".", alloc);
+        defer alloc.free(root);
+        const conf = try std.fmt.allocPrint(
+            alloc,
+            "<?xml version=\"1.0\"?><fontconfig><dir>{s}</dir><cachedir>{s}/cache</cachedir></fontconfig>",
+            .{ root, root },
+        );
+        defer alloc.free(conf);
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "fonts.conf", .data = conf });
+
+        const conf_path = try std.fmt.allocPrintSentinel(alloc, "{s}/fonts.conf", .{root}, 0);
+        defer alloc.free(conf_path);
+        if (setenv("FONTCONFIG_FILE", conf_path, 1) != 0) return error.SetenvFailed;
+        return .{ .tmp = tmp };
+    }
+
+    pub fn deinit(self: *TestFonts) void {
+        self.tmp.cleanup();
+    }
+};
+
+test "rust-fontconfig family selection honors style" {
+    if (options.backend != .rust_fontconfig_freetype) return error.SkipZigTest;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const embedded = @import("main.zig").embedded;
+
+    var fonts = try TestFonts.init(alloc, &.{
+        .{ .file = "regular.ttf", .data = embedded.regular },
+        .{ .file = "bold.ttf", .data = embedded.bold },
+        .{ .file = "italic.ttf", .data = embedded.italic },
+        .{ .file = "bold-italic.ttf", .data = embedded.bold_italic },
+        .{ .file = "inconsolata.ttf", .data = embedded.inconsolata },
+    });
+    defer fonts.deinit();
+
+    var lib = try Library.init(alloc);
+    defer lib.deinit();
+    var disco = RustFontconfig.init(lib);
+    defer disco.deinit();
+
+    const cases = [_]struct { bold: bool, italic: bool, name: []const u8 }{
+        .{ .bold = false, .italic = false, .name = "JetBrains Mono Regular" },
+        .{ .bold = true, .italic = false, .name = "JetBrains Mono Bold" },
+        .{ .bold = false, .italic = true, .name = "JetBrains Mono Italic" },
+        .{ .bold = true, .italic = true, .name = "JetBrains Mono Bold Italic" },
+    };
+    for (cases) |case| {
+        var it = try disco.discover(alloc, .{
+            .family = "JetBrains Mono",
+            .size = 12,
+            .bold = case.bold,
+            .italic = case.italic,
+        });
+        defer it.deinit();
+        var face = (try it.next()).?;
+        defer face.deinit();
+        var buf: [256]u8 = undefined;
+        try testing.expectEqualStrings(case.name, try face.name(&buf));
+        try testing.expect(face.hasCodepoint('A', null));
+        var loaded = try face.load(lib, .{ .size = .{ .points = 12 } });
+        defer loaded.deinit();
+        try testing.expect(loaded.glyphIndex('A') != null);
+    }
+
+    var named = try disco.discover(alloc, .{ .family = "Inconsolata", .style = "Regular", .size = 12 });
+    defer named.deinit();
+    var face = (try named.next()).?;
+    defer face.deinit();
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("Inconsolata", try face.familyName(&buf));
+}
+
+test "rust-fontconfig cluster fallback never splits a cluster" {
+    if (options.backend != .rust_fontconfig_freetype) return error.SkipZigTest;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var fonts = try TestFonts.init(alloc, &.{
+        .{ .file = "emoji.ttf", .data = @import("main.zig").embedded.emoji_text },
+        .{ .file = "mono.ttf", .data = @import("main.zig").embedded.jetbrains_mono },
+        .{ .file = "cozette.ttf", .data = @import("main.zig").embedded.cozette },
+    });
+    defer fonts.deinit();
+
+    var lib = try Library.init(alloc);
+    defer lib.deinit();
+    var disco = RustFontconfig.init(lib);
+    defer disco.deinit();
+
+    const heart: u21 = 0x2764;
+    const acute: u21 = 0x0301;
+
+    var single_has_partial = false;
+    {
+        var it = try disco.discoverCluster(alloc, &.{heart}, .{ .size = 12 });
+        defer it.deinit();
+        while (try it.next()) |face_| {
+            var face = face_;
+            defer face.deinit();
+            if (!face.hasCodepoint(acute, null)) single_has_partial = true;
+        }
+    }
+    try testing.expect(single_has_partial);
+
+    var it = try disco.discoverCluster(alloc, &.{ heart, acute }, .{ .size = 12 });
+    defer it.deinit();
+    var count: usize = 0;
+    while (try it.next()) |face_| {
+        var face = face_;
+        defer face.deinit();
+        try testing.expect(face.hasCodepoint(heart, null));
+        try testing.expect(face.hasCodepoint(acute, null));
+        count += 1;
+    }
+    try testing.expect(count > 0);
+}
+
+test "rust-fontconfig cluster fallback prefers the font declaring the script" {
+    if (options.backend != .rust_fontconfig_freetype) return error.SkipZigTest;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var fonts = try TestFonts.init(alloc, &.{
+        .{ .file = "a-julia.ttf", .data = @import("main.zig").embedded.julia_mono },
+        .{ .file = "b-mono.ttf", .data = @import("main.zig").embedded.jetbrains_mono },
+        .{ .file = "c-kawkab.ttf", .data = @import("main.zig").embedded.arabic },
+        .{ .file = "d-cozette.ttf", .data = @import("main.zig").embedded.cozette },
+    });
+    defer fonts.deinit();
+
+    var lib = try Library.init(alloc);
+    defer lib.deinit();
+    var disco = RustFontconfig.init(lib);
+    defer disco.deinit();
+
+    var it = try disco.discoverCluster(alloc, &.{0x3B1}, .{ .size = 12 });
+    defer it.deinit();
+    var face = (try it.next()).?;
+    defer face.deinit();
+    var buf: [256]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, try face.familyName(&buf), "Kawkab") != null);
 }
 
 test "coretext" {

@@ -15,6 +15,8 @@ pub const Backend = enum {
     /// Fontconfig for font discovery and FreeType for font rendering.
     fontconfig_freetype,
 
+    rust_fontconfig_freetype,
+
     /// CoreText for font discovery, rendering, and shaping (macOS).
     coretext,
 
@@ -68,6 +70,7 @@ pub const Backend = enum {
             .freetype,
             .freetype_windows,
             .fontconfig_freetype,
+            .rust_fontconfig_freetype,
             .coretext_freetype,
             => true,
 
@@ -90,6 +93,7 @@ pub const Backend = enum {
             .freetype,
             .freetype_windows,
             .fontconfig_freetype,
+            .rust_fontconfig_freetype,
             .web_canvas,
             => false,
         };
@@ -101,6 +105,7 @@ pub const Backend = enum {
 
             .freetype,
             .freetype_windows,
+            .rust_fontconfig_freetype,
             .coretext,
             .coretext_freetype,
             .coretext_harfbuzz,
@@ -110,11 +115,16 @@ pub const Backend = enum {
         };
     }
 
+    pub fn hasRustFontconfig(self: Backend) bool {
+        return self == .rust_fontconfig_freetype;
+    }
+
     pub fn hasHarfbuzz(self: Backend) bool {
         return switch (self) {
             .freetype,
             .freetype_windows,
             .fontconfig_freetype,
+            .rust_fontconfig_freetype,
             .coretext_freetype,
             .coretext_harfbuzz,
             => true,
