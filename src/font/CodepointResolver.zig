@@ -227,6 +227,97 @@ pub fn getIndex(
     return self.collection.getIndex(cp, .regular, .{ .any = {} });
 }
 
+pub const getClusterIndex = if (supports_cluster_discovery)
+    getClusterIndexDiscovered
+else
+    getClusterIndexUnsupported;
+
+fn getClusterIndexUnsupported(
+    self: *CodepointResolver,
+    alloc: Allocator,
+    cluster: []const u21,
+    style: Style,
+    p: ?Presentation,
+) ?Collection.Index {
+    _ = self;
+    _ = alloc;
+    _ = cluster;
+    _ = style;
+    _ = p;
+    return null;
+}
+
+fn getClusterIndexDiscovered(
+    self: *CodepointResolver,
+    alloc: Allocator,
+    cluster: []const u21,
+    style: Style,
+    p: ?Presentation,
+) ?Collection.Index {
+    if (cluster.len == 0) return null;
+
+    if (style != .regular and !self.styles.get(style)) {
+        return self.getClusterIndex(alloc, cluster, .regular, p);
+    }
+
+    const p_mode: Collection.PresentationMode = if (p) |v| .{ .explicit = v } else .{
+        .default = if (uucode.get(.is_emoji_presentation, cluster[0]))
+            .emoji
+        else
+            .text,
+    };
+
+    if (self.collection.getIndexForCluster(cluster, style, p_mode)) |value| return value;
+
+    if (style != .regular) {
+        if (self.getClusterIndex(alloc, cluster, .regular, p)) |value| return value;
+        return self.collection.getIndexForCluster(cluster, .regular, .{ .any = {} });
+    }
+
+    const disco = self.discover orelse return null;
+    const load_opts = self.collection.load_options orelse return null;
+    var disco_it = disco.discoverCluster(alloc, cluster, .{
+        .size = load_opts.size.points,
+    }) catch return null;
+    defer disco_it.deinit();
+
+    while (true) {
+        var deferred_face = (disco_it.next() catch |err| {
+            log.warn("cluster fallback search failed with error err={}", .{err});
+            return null;
+        }) orelse break;
+
+        const face: Collection.Entry = .{
+            .face = .{ .deferred = deferred_face },
+            .fallback = true,
+        };
+        if (!face.hasCluster(cluster, p_mode)) {
+            deferred_face.deinit();
+            continue;
+        }
+
+        var buf: [256]u8 = undefined;
+        log.info("found cluster starting 0x{X} in fallback face={s}", .{
+            cluster[0],
+            deferred_face.name(&buf) catch "<error>",
+        });
+        return self.collection.addDeferred(alloc, deferred_face, .{
+            .style = style,
+            .fallback = true,
+            .size_adjustment = font.default_fallback_adjustment,
+        }) catch {
+            deferred_face.deinit();
+            return null;
+        };
+    }
+
+    log.debug("no fallback face found for cluster starting 0x{X}", .{cluster[0]});
+    return null;
+}
+
+pub const supports_cluster_discovery = font.Discover != void and
+    @hasDecl(font.Discover, "discoverCluster");
+
 /// Checks if the codepoint is in the map of codepoint overrides,
 /// finds the override font, and returns it.
 fn getIndexCodepointOverride(

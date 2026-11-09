@@ -293,6 +293,28 @@ pub fn getIndex(
     return null;
 }
 
+pub fn getIndexForCluster(
+    self: *const Collection,
+    cluster: []const u21,
+    style: Style,
+    p_mode: PresentationMode,
+) ?Index {
+    var i: usize = 0;
+    var it = self.faces.get(style).constIterator(0);
+    while (it.next()) |entry_or_alias| {
+        if (entry_or_alias.getConstEntry().hasCluster(cluster, p_mode)) {
+            return .{
+                .style = style,
+                .idx = @intCast(i),
+            };
+        }
+
+        i += 1;
+    }
+
+    return null;
+}
+
 /// Check if a specific font index has a specific codepoint. This does not
 /// necessarily force the font to load. The presentation value "p" will
 /// verify the Emoji representation matches if it is non-null. If "p" is
@@ -798,6 +820,20 @@ pub const Entry = struct {
             .deferred => true,
             .loaded => false,
         };
+    }
+
+    pub fn hasCluster(
+        self: Entry,
+        cluster: []const u21,
+        p_mode: PresentationMode,
+    ) bool {
+        var first = true;
+        for (cluster) |cp| {
+            if (cp == 0xFE0E or cp == 0xFE0F or cp == 0x200D) continue;
+            if (!self.hasCodepoint(cp, if (first) p_mode else .{ .any = {} })) return false;
+            first = false;
+        }
+        return !first;
     }
 
     /// True if this face satisfies the given codepoint and presentation.

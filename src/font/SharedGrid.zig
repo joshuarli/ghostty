@@ -41,6 +41,8 @@ const log = std.log.scoped(.font_shared_grid);
 /// Cache for codepoints to font indexes in a group.
 codepoints: std.HashMapUnmanaged(CodepointKey, ?Collection.Index, CodepointKey.Context, 80) = .{},
 
+clusters: std.StringHashMapUnmanaged(?Collection.Index) = .{},
+
 /// Cache for glyph renders into the atlas.
 glyphs: std.HashMapUnmanaged(GlyphKey, Render, GlyphKey.Context, 80) = .{},
 
@@ -121,6 +123,9 @@ pub fn init(
 /// Deinit. Assumes no concurrent access so no lock is taken.
 pub fn deinit(self: *SharedGrid, alloc: Allocator) void {
     self.codepoints.deinit(alloc);
+    var clusters = self.clusters.keyIterator();
+    while (clusters.next()) |key| alloc.free(key.*);
+    self.clusters.deinit(alloc);
     self.glyphs.deinit(alloc);
     self.atlas_grayscale.deinit(alloc);
     self.atlas_color.deinit(alloc);
@@ -192,6 +197,58 @@ pub fn getIndex(
         // failed to load it in the future anyways so we want to undo all
         // the caching we did.
         _ = try self.resolver.collection.getFace(idx);
+    }
+
+    return value;
+}
+
+fn clusterKey(
+    alloc: Allocator,
+    cluster: []const u21,
+    style: Style,
+    p: ?Presentation,
+) Allocator.Error![]u8 {
+    const key = try alloc.alloc(u8, 2 + cluster.len * @sizeOf(u21));
+    key[0] = @intFromEnum(style);
+    key[1] = if (p) |v| @intFromEnum(v) + 1 else 0;
+    @memcpy(key[2..], std.mem.sliceAsBytes(cluster));
+    return key;
+}
+
+pub fn getClusterIndex(
+    self: *SharedGrid,
+    alloc: Allocator,
+    cluster: []const u21,
+    style: Style,
+    p: ?Presentation,
+) !?Collection.Index {
+    var probe_buf: [256]u8 = undefined;
+    var probe_fba = std.heap.FixedBufferAllocator.init(&probe_buf);
+    const probe = clusterKey(probe_fba.allocator(), cluster, style, p) catch
+        try clusterKey(alloc, cluster, style, p);
+    defer if (!probe_fba.ownsSlice(probe)) alloc.free(probe);
+
+    {
+        self.lock.lockSharedUncancelable(global.io());
+        defer self.lock.unlockShared(global.io());
+        if (self.clusters.get(probe)) |v| return v;
+    }
+
+    self.lock.lockUncancelable(global.io());
+    defer self.lock.unlock(global.io());
+
+    if (self.clusters.get(probe)) |v| return v;
+
+    const key = try alloc.dupe(u8, probe);
+    errdefer alloc.free(key);
+    try self.clusters.putNoClobber(alloc, key, null);
+    errdefer _ = self.clusters.remove(key);
+
+    const value = self.resolver.getClusterIndex(alloc, cluster, style, p);
+    self.clusters.getPtr(key).?.* = value;
+
+    if (value) |idx| {
+        if (idx.special() == null) _ = try self.resolver.collection.getFace(idx);
     }
 
     return value;
