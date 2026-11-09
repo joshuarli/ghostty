@@ -22,6 +22,9 @@ const log = std.log.scoped(.deferred_face);
 fc: if (options.backend == .fontconfig_freetype) ?Fontconfig else void =
     if (options.backend == .fontconfig_freetype) null else {},
 
+rfc: if (options.backend == .rust_fontconfig_freetype) ?RustFontconfig else void =
+    if (options.backend == .rust_fontconfig_freetype) null else {},
+
 /// CoreText
 ct: if (font.Discover == font.discovery.CoreText) ?CoreText else void =
     if (font.Discover == font.discovery.CoreText) null else {},
@@ -55,6 +58,31 @@ pub const Fontconfig = struct {
 
     pub fn deinit(self: *Fontconfig) void {
         self.pattern.destroy();
+        self.* = undefined;
+    }
+};
+
+pub const RustFontconfig = struct {
+    path: [:0]const u8,
+
+    face_index: i32,
+
+    family: [:0]const u8,
+    full_name: [:0]const u8,
+
+    variations: []const font.face.Variation,
+
+    peek: Face,
+
+    presentation: Presentation,
+
+    alloc: Allocator,
+
+    pub fn deinit(self: *RustFontconfig) void {
+        self.peek.deinit();
+        self.alloc.free(self.path);
+        self.alloc.free(self.family);
+        self.alloc.free(self.full_name);
         self.* = undefined;
     }
 };
@@ -133,6 +161,7 @@ pub fn deinit(self: *DeferredFace) void {
         .fontconfig_freetype => if (self.fc) |*fc| fc.deinit(),
         .freetype => {},
         .freetype_windows => if (self.win) |*w| w.deinit(),
+        .rust_fontconfig_freetype => if (self.rfc) |*r| r.deinit(),
         .web_canvas => if (self.wc) |*wc| wc.deinit(),
         .coretext,
         .coretext_freetype,
@@ -149,6 +178,8 @@ pub fn familyName(self: DeferredFace, buf: []u8) ![]const u8 {
         .freetype => {},
 
         .freetype_windows => if (self.win) |w| return try w.peek.name(buf),
+
+        .rust_fontconfig_freetype => if (self.rfc) |r| return r.family,
 
         .fontconfig_freetype => if (self.fc) |fc|
             return (try fc.pattern.get(.family, 0)).string,
@@ -179,6 +210,8 @@ pub fn name(self: DeferredFace, buf: []u8) ![]const u8 {
         .freetype => {},
 
         .freetype_windows => if (self.win) |w| return try w.peek.name(buf),
+
+        .rust_fontconfig_freetype => if (self.rfc) |r| return r.full_name,
 
         .fontconfig_freetype => if (self.fc) |fc|
             return (try fc.pattern.get(.fullname, 0)).string,
@@ -215,6 +248,7 @@ pub fn load(
     return switch (options.backend) {
         .fontconfig_freetype => try self.loadFontconfig(lib, opts),
         .freetype_windows => try self.loadWindows(lib, opts),
+        .rust_fontconfig_freetype => try self.loadRustFontconfig(lib, opts),
         .coretext, .coretext_harfbuzz, .coretext_noshape => try self.loadCoreText(lib, opts),
         .coretext_freetype => try self.loadCoreTextFreetype(lib, opts),
         .web_canvas => try self.loadWebCanvas(opts),
@@ -239,6 +273,19 @@ fn loadFontconfig(
     var face = try Face.initFile(lib, filename, face_index, opts);
     errdefer face.deinit();
     try face.setVariations(fc.variations, opts);
+    return face;
+}
+
+fn loadRustFontconfig(
+    self: *DeferredFace,
+    lib: Library,
+    opts: font.face.Options,
+) !Face {
+    const r = self.rfc.?;
+
+    var face = try Face.initFile(lib, r.path, r.face_index, opts);
+    errdefer face.deinit();
+    try face.setVariations(r.variations, opts);
     return face;
 }
 
@@ -353,6 +400,13 @@ pub fn hasCodepoint(self: DeferredFace, cp: u32, p: ?Presentation) bool {
                 }
 
                 return true;
+            }
+        },
+
+        .rust_fontconfig_freetype => {
+            if (self.rfc) |r| {
+                if (p) |desired| if (r.presentation != desired) return false;
+                return r.peek.glyphIndex(cp) != null;
             }
         },
 

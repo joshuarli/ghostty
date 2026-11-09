@@ -21,6 +21,7 @@ pub const Shaper = switch (options.backend) {
     .freetype,
     .freetype_windows,
     .fontconfig_freetype,
+    .rust_fontconfig_freetype,
     .coretext_freetype,
     .coretext_harfbuzz,
     => harfbuzz.Shaper,
