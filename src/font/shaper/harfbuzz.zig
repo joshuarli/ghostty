@@ -897,6 +897,63 @@ test "shaper selects font for entire grapheme" {
     try testing.expectEqual(additional, run.font_index);
 }
 
+test "shaper keeps a grapheme in one discovered fallback font" {
+    if (font.Discover == void) return error.SkipZigTest;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const io = testing.io;
+
+    var fonts = try font.discovery.TestFonts.init(alloc, &.{
+        .{ .file = "emoji.ttf", .data = font.embedded.emoji_text },
+        .{ .file = "cozette.ttf", .data = font.embedded.cozette },
+    });
+    defer fonts.deinit();
+
+    var lib = try Library.init(alloc);
+    defer lib.deinit();
+
+    var disco = font.Discover.init(lib);
+    defer disco.deinit();
+
+    var c = Collection.init();
+    c.load_options = .{ .library = lib };
+    _ = try c.add(alloc, try .init(
+        lib,
+        font.embedded.inconsolata,
+        .{ .size = .{ .points = 12 } },
+    ), .{
+        .style = .regular,
+        .fallback = false,
+        .size_adjustment = .none,
+    });
+
+    var grid = try SharedGrid.init(alloc, .{ .collection = c, .discover = &disco });
+    defer grid.deinit(alloc);
+
+    var shaper = try Shaper.init(alloc, .{});
+    defer shaper.deinit();
+
+    var t = try terminal.Terminal.init(io, alloc, .{ .cols = 5, .rows = 3 });
+    defer t.deinit(alloc);
+    var s = t.vtStream();
+    defer s.deinit();
+    s.nextSlice("\u{2764}\u{0301}");
+
+    var state: terminal.RenderState = .empty;
+    defer state.deinit(alloc);
+    try state.update(alloc, &t);
+
+    var it = shaper.runIterator(.{
+        .grid = &grid,
+        .cells = state.row_data.get(0).cells.slice(),
+    });
+    const run = (try it.next(alloc)).?;
+    const face = try grid.resolver.collection.getFace(run.font_index);
+    try testing.expect(face.glyphIndex(0x2764) != null);
+    try testing.expect(face.glyphIndex(0x0301) != null);
+}
+
 test "shape variation selector VS15" {
     const testing = std.testing;
     const alloc = testing.allocator;

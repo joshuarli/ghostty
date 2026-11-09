@@ -323,6 +323,32 @@ pub const RunIterator = struct {
         style: font.Style,
         presentation: ?font.Presentation,
     ) !?font.Collection.Index {
+        if (try self.indexForCellCodepoints(
+            alloc,
+            cell,
+            graphemes,
+            style,
+            presentation,
+        )) |idx| return idx;
+
+        if (comptime !font.CodepointResolver.supports_cluster_discovery) return null;
+        if (!cell.hasGrapheme()) return null;
+
+        const cluster = try alloc.alloc(u21, graphemes.len + 1);
+        defer alloc.free(cluster);
+        cluster[0] = cell.codepoint();
+        @memcpy(cluster[1..], graphemes);
+        return try self.opts.grid.getClusterIndex(alloc, cluster, style, presentation);
+    }
+
+    fn indexForCellCodepoints(
+        self: *RunIterator,
+        alloc: Allocator,
+        cell: *const terminal.Cell,
+        graphemes: []const u21,
+        style: font.Style,
+        presentation: ?font.Presentation,
+    ) !?font.Collection.Index {
         if (cell.isEmpty() or
             cell.codepoint() == 0 or
             cell.codepoint() == terminal.kitty.graphics.unicode.placeholder)
