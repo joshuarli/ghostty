@@ -4228,6 +4228,7 @@ test "handle bom in config files" {
         var reader: std.Io.Reader = .fixed(data);
         var cfg = try Config.default(alloc);
         defer cfg.deinit();
+        cfg.theme = null;
         try cfg.loadReader(
             alloc,
             &reader,
@@ -4247,6 +4248,7 @@ test "handle bom in config files" {
         var reader: std.Io.Reader = .fixed(data);
         var cfg = try Config.default(alloc);
         defer cfg.deinit();
+        cfg.theme = null;
         try cfg.loadReader(
             alloc,
             &reader,
@@ -10855,6 +10857,7 @@ test "keyboard-sound config" {
     {
         var cfg = try Config.default(alloc);
         defer cfg.deinit();
+        cfg.theme = null;
         var it: TestIterator = .{ .data = &.{
             "--keyboard-sound=off",
             "--keyboard-sound-volume=0.20",
@@ -10881,6 +10884,7 @@ test "keyboard-sound config" {
     {
         var cfg = try Config.default(alloc);
         defer cfg.deinit();
+        cfg.theme = null;
         var it: TestIterator = .{ .data = &.{"--keyboard-sound-volume=1.5"} };
         try cfg.loadIter(alloc, &it);
         try cfg.finalize();
@@ -10898,6 +10902,7 @@ test "keyboard-sound config" {
     for (rejected) |arg| {
         var cfg = try Config.default(alloc);
         defer cfg.deinit();
+        cfg.theme = null;
         var it: TestIterator = .{ .data = &.{arg} };
         try cfg.loadIter(alloc, &it);
         try cfg.finalize();
