@@ -22,9 +22,9 @@ env:
   APP_NAME: Ghostty Custom
   BUNDLE_ID: com.joshuarli.ghostty-custom
   ARTIFACT: Ghostty-Custom-aarch64-apple-darwin.dmg
-  LINUX_ARTIFACT_X64: ghostty-custom-x86_64-linux-musl.tar.gz
-  LINUX_ARTIFACT_ARM64: ghostty-custom-aarch64-linux-musl.tar.gz
-  LINUX_SOFTWARE_ARTIFACT_X64: ghostty-custom-software-x86_64-linux-musl.tar.gz
+  LINUX_ARTIFACT_X64: ghostty-custom-x86_64-linux-musl.tar.xz
+  LINUX_ARTIFACT_ARM64: ghostty-custom-aarch64-linux-musl.tar.xz
+  LINUX_SOFTWARE_ARTIFACT_X64: ghostty-custom-software-x86_64-linux-musl.tar.xz
 
 jobs:
   build:
@@ -121,7 +121,7 @@ jobs:
           ./zig-out/bin/ghostty +show-config > /dev/null
 
       - name: Package binary
-        run: tar czf "${{ env.LINUX_ARTIFACT_X64 }}" -C zig-out/bin ghostty
+        run: tar cJf "${{ env.LINUX_ARTIFACT_X64 }}" -C zig-out/bin ghostty
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -171,7 +171,7 @@ jobs:
           ./zig-out/bin/ghostty +show-config > /dev/null
 
       - name: Package binary
-        run: tar czf "${{ env.LINUX_SOFTWARE_ARTIFACT_X64 }}" -C zig-out/bin ghostty
+        run: tar cJf "${{ env.LINUX_SOFTWARE_ARTIFACT_X64 }}" -C zig-out/bin ghostty
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -227,7 +227,7 @@ jobs:
               ! readelf -A zig-out/bin/ghostty | grep -qi sve
               ./zig-out/bin/ghostty --version | grep -q "wayland"
               ./zig-out/bin/ghostty +show-config > /dev/null
-              tar czf "$LINUX_ARTIFACT_ARM64" -C zig-out/bin ghostty
+              tar cJf "$LINUX_ARTIFACT_ARM64" -C zig-out/bin ghostty
             '
         env:
           LINUX_ARTIFACT_ARM64: ${{ env.LINUX_ARTIFACT_ARM64 }}
