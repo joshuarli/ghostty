@@ -72,7 +72,7 @@ jobs:
 
   linux-x64:
     name: Build Linux x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     container: alpine:edge
     permissions:
       actions: write
@@ -130,7 +130,7 @@ jobs:
 
   linux-x64-software:
     name: Build Linux x86_64 static software
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     container: alpine:edge
     permissions:
       actions: write
@@ -180,7 +180,7 @@ jobs:
 
   linux-arm64:
     name: Build Linux aarch64
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     permissions:
       actions: write
       contents: read
@@ -240,7 +240,7 @@ jobs:
   release:
     name: Create pre-release
     needs: [build, linux-x64, linux-x64-software, linux-arm64]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     permissions:
       actions: read
