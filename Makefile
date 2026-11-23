@@ -2,6 +2,14 @@ init:
 	@echo You probably want to run "zig build" instead.
 .PHONY: init
 
+test:
+	zig build test
+.PHONY: test
+
+lint:
+	zig build -Demit-macos-app=false
+.PHONY: lint
+
 # glad updates the GLAD loader. To use this, place the generated glad.zip
 # in this directory next to the Makefile, remove vendor/glad and run this target.
 #

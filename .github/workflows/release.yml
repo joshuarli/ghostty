@@ -40,7 +40,6 @@ jobs:
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.17.0
           cache-key: ghosttykit-aarch64-macos
 
       - name: Build GhosttyKit
@@ -94,7 +93,6 @@ jobs:
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.17.0
           cache-key: laputa-x86_64-linux-musl
 
       - name: Verify Zig in container PATH
@@ -150,7 +148,6 @@ jobs:
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
-          version: 0.17.0
           cache-key: laputa-software-x86_64-linux-musl
 
       - name: Run Wayland and renderer tests
@@ -205,9 +202,10 @@ jobs:
               apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig tar zstd curl \
                 wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses freetype-dev harfbuzz-dev cargo curl
               dist/linux/build-rust-fontconfig.sh
-              curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.17.0/zig-aarch64-linux-0.17.0.tar.xz
+              curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.17.1/zig-aarch64-linux-0.17.1.tar.xz
+              echo "a1546d5646eb184437918d6635ca6b762a0e889eac09cef720ee7a1ed3fe7795  /tmp/zig.tar.xz" | sha256sum -c -
               mkdir -p /opt && tar -xf /tmp/zig.tar.xz -C /opt
-              export PATH=/opt/zig-aarch64-linux-0.17.0:$PATH
+              export PATH=/opt/zig-aarch64-linux-0.17.1:$PATH
               zig version
               zig build -Dapp-runtime=wayland -Doptimize=ReleaseFast -Dstrip=true \
                 -Demit-themes=false -Di18n=false -Dcpu=baseline -Dfont-backend=rust_fontconfig_freetype \
