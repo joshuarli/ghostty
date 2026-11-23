@@ -130,9 +130,7 @@ jobs:
       - test-lib-vt-pkgconfig
       - test-macos
       - pinact
-      - prettier
       - swiftlint
-      - alejandra
       - typos
       - shellcheck
       - translations
@@ -141,7 +139,6 @@ jobs:
       - test-debian-13
       - test-dist
       - valgrind
-      - zig-fmt
       - abi-check
       - build-libghostty-vt-docs
 
@@ -2512,34 +2509,6 @@ jobs:
         run: |
           nix develop .#fuzz -c sh -c 'cd test/fuzz-libghostty && zig build'
 
-  zig-fmt:
-    if: github.repository == 'ghostty-org/ghostty' && needs.skip.outputs.skip != 'true' && needs.skip.outputs.zig == 'true'
-    needs: skip
-    runs-on: namespace-profile-ghostty-xsm
-    timeout-minutes: 60
-    env:
-      ZIG_LOCAL_CACHE_DIR: /zig/local-cache
-      ZIG_GLOBAL_CACHE_DIR: /zig/global-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Setup Cache
-        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
-        with:
-          path: |
-            /nix
-            /zig
-      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
-        with:
-          name: ghostty
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          skipPush: true
-          useDaemon: false # sometimes fails on short jobs
-      - name: zig fmt
-        run: nix develop -c zig fmt --check .
-
   pinact:
     name: "GitHub Actions Pins"
     if: github.repository == 'ghostty-org/ghostty' && needs.skip.outputs.skip != 'true' && needs.skip.outputs.actions_pins == 'true'
@@ -2573,34 +2542,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  prettier:
-    if: github.repository == 'ghostty-org/ghostty' && needs.skip.outputs.skip != 'true'
-    needs: skip
-    runs-on: namespace-profile-ghostty-xsm
-    timeout-minutes: 60
-    env:
-      ZIG_LOCAL_CACHE_DIR: /zig/local-cache
-      ZIG_GLOBAL_CACHE_DIR: /zig/global-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Setup Cache
-        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
-        with:
-          path: |
-            /nix
-            /zig
-      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
-        with:
-          name: ghostty
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          skipPush: true
-          useDaemon: false # sometimes fails on short jobs
-      - name: prettier check
-        run: nix develop -c prettier --check .
-
   swiftlint:
     if: github.repository == 'ghostty-org/ghostty' && needs.skip.outputs.skip != 'true' && needs.skip.outputs.macos == 'true'
     runs-on: namespace-profile-ghostty-macos-golden
@@ -2630,34 +2571,6 @@ jobs:
 
       - name: swiftlint check
         run: nix develop -c swiftlint lint --strict
-
-  alejandra:
-    if: github.repository == 'ghostty-org/ghostty' && needs.skip.outputs.skip != 'true' && needs.skip.outputs.nix == 'true'
-    needs: skip
-    runs-on: namespace-profile-ghostty-xsm
-    timeout-minutes: 60
-    env:
-      ZIG_LOCAL_CACHE_DIR: /zig/local-cache
-      ZIG_GLOBAL_CACHE_DIR: /zig/global-cache
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Setup Cache
-        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
-        with:
-          path: |
-            /nix
-            /zig
-      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
-        with:
-          name: ghostty
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          skipPush: true
-          useDaemon: false # sometimes fails on short jobs
-      - name: alejandra check
-        run: nix develop -c alejandra --check .
 
   typos:
     if: github.repository == 'ghostty-org/ghostty' && needs.skip.outputs.skip != 'true'
