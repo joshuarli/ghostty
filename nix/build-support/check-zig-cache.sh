@@ -104,15 +104,11 @@ elif [ "$1" != "--update" ]; then
 fi
 
 zon2nix "$BUILD_ZIG_ZON" --17 --nix "$WORK_DIR/packages.nix" --txt "$WORK_DIR/packages.txt" --json "$WORK_DIR/packages.json" --flatpak "$WORK_DIR/zig-packages.json"
-alejandra --quiet "$WORK_DIR/packages.nix"
-prettier --log-level warn --write "$WORK_DIR/packages.json"
-prettier --log-level warn --write "$WORK_DIR/zig-packages.json"
 
 # Generate the libghostty-vt files from the new deps/packages.json, not the
 # committed one. A change to build.zig.zon and its effect on the library's
 # list are then checked in the same run.
 "$ROOT/nix/build-support/gen-lib-vt-deps.sh" "$WORK_DIR/packages.json" "$WORK_DIR/libghostty-vt.txt" "$WORK_DIR/libghostty-vt-third-party.json"
-prettier --log-level warn --write "$WORK_DIR/libghostty-vt-third-party.json"
 
 NEW_HASH_NIX=$(sha512sum "$WORK_DIR/packages.nix" | awk '{print $1}')
 NEW_HASH_TXT=$(sha512sum "$WORK_DIR/packages.txt" | awk '{print $1}')

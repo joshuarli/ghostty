@@ -140,8 +140,6 @@
         )
       ];
 
-    formatter = forAllPlatforms (pkgs: pkgs.alejandra);
-
     apps = forBuildablePlatforms (pkgs: let
       runVM = module: let
         vm = import ./nix/vm/create.nix {

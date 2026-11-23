@@ -89,8 +89,8 @@ trap 'rm -rf "$PROJECT_DIR"' EXIT
 
 # Build an index with one "<hash><TAB><url>" line per package. This reads
 # deps/packages.json as text rather than parsing it, so the script needs only
-# POSIX tools. That works because the file is generated and formatted by
-# prettier: each package is a key indented by two spaces, followed by its
+# POSIX tools. That works because zon2nix generates the file with a fixed
+# layout: each package is a key indented by two spaces, followed by its
 # "url" field indented by four.
 awk '
   /^  "[^"]*": \{/ { key = $0; sub(/^  "/, "", key); sub(/".*/, "", key) }

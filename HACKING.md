@@ -125,45 +125,6 @@ destinations. Setting `GHOSTTY_LOG` to `false` will disable all destinations.
 
 ## Linting
 
-### Prettier
-
-Ghostty's docs and resources (not including Zig code) are linted using
-[Prettier](https://prettier.io) with out-of-the-box settings. A Prettier CI
-check will fail builds with improper formatting. Therefore, if you are
-modifying anything Prettier will lint, you may want to install it locally and
-run this from the repo root before you commit:
-
-```
-prettier --write .
-```
-
-Make sure your Prettier version matches the version of Prettier in [devShell.nix](https://github.com/ghostty-org/ghostty/blob/main/nix/devShell.nix).
-
-Nix users can use the following command to format with Prettier:
-
-```
-nix develop -c prettier --write .
-```
-
-### Alejandra
-
-Nix modules are formatted with [Alejandra](https://github.com/kamadorueda/alejandra/). An Alejandra CI check
-will fail builds with improper formatting.
-
-Nix users can use the following command to format with Alejandra:
-
-```
-nix develop -c alejandra .
-```
-
-Non-Nix users should install Alejandra and use the following command to format with Alejandra:
-
-```
-alejandra .
-```
-
-Make sure your Alejandra version matches the version of Alejandra in [devShell.nix](https://github.com/ghostty-org/ghostty/blob/main/nix/devShell.nix).
-
 ### ShellCheck
 
 Bash scripts are checked with [ShellCheck](https://www.shellcheck.net/) in CI.
@@ -188,24 +149,10 @@ shellcheck \
 
 ### SwiftLint
 
-Swift code is linted using [SwiftLint](https://github.com/realm/SwiftLint). A
-SwiftLint CI check will fail builds with improper formatting. Therefore, if you
-are modifying Swift code, you may want to install it locally and run this from
-the repo root before you commit:
-
-```
-swiftlint lint --fix
-```
-
+Swift code is linted using [SwiftLint](https://github.com/realm/SwiftLint).
 Make sure your SwiftLint version matches the version in [devShell.nix](https://github.com/ghostty-org/ghostty/blob/main/nix/devShell.nix).
 
-Nix users can use the following command to format with SwiftLint:
-
-```
-nix develop -c swiftlint lint --fix
-```
-
-To check for violations without auto-fixing:
+To check for violations:
 
 ```
 nix develop -c swiftlint lint --strict

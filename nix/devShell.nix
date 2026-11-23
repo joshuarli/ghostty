@@ -12,7 +12,6 @@
   #, glxinfo # unused
   ncurses,
   nodejs,
-  prettier,
   oniguruma,
   parallel,
   pkg-config,
@@ -62,7 +61,6 @@
   spirv-cross,
   simdutf,
   zlib,
-  alejandra,
   jq,
   kaitai-struct-compiler,
   minisign,
@@ -137,8 +135,6 @@ in
         nodejs
 
         # Linting
-        prettier
-        alejandra
         pinact
         typos
         shellcheck
