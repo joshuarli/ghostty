@@ -1,6 +1,5 @@
 # macOS Ghostty Application
 
-- Use `swiftlint` for formatting and linting Swift code.
 - If code outside of `macos/` directory is modified, use
   `zig build -Demit-macos-app=false` before building the macOS app to update
   the underlying Ghostty library.

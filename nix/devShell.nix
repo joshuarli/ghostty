@@ -70,7 +70,6 @@
   poop,
   typos,
   shellcheck,
-  swiftlint,
   uv,
   wayland,
   wayland-scanner,
@@ -129,7 +128,9 @@ in
         pkg-config
         zig
         zip
-        zon2nix.packages.${stdenv.hostPlatform.system}.zon2nix
+        (zon2nix.packages.${stdenv.hostPlatform.system}.zon2nix.overrideAttrs (old: {
+          patches = (old.patches or []) ++ [./zon2nix-no-nixfmt.patch];
+        }))
 
         # For web and wasm stuff
         nodejs
@@ -238,7 +239,6 @@ in
         })
       ]
       ++ lib.optionals stdenv.hostPlatform.isDarwin [
-        swiftlint
       ];
 
     # This should be set onto the rpath of the ghostty binary if you want

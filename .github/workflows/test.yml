@@ -46,7 +46,6 @@ jobs:
           token: ""
           filters: |
             macos:
-              - '.swiftlint.yml'
               - 'macos/**'
             actions_pins:
               - '.github/workflows/**'
@@ -130,7 +129,6 @@ jobs:
       - test-lib-vt-pkgconfig
       - test-macos
       - pinact
-      - swiftlint
       - typos
       - shellcheck
       - translations
@@ -2541,36 +2539,6 @@ jobs:
         run: nix develop -c pinact run --check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  swiftlint:
-    if: github.repository == 'ghostty-org/ghostty' && needs.skip.outputs.skip != 'true' && needs.skip.outputs.macos == 'true'
-    runs-on: namespace-profile-ghostty-macos-golden
-    needs: skip
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Setup Cache
-        uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
-        with:
-          cache: |
-            xcode
-          path: |
-            /Users/runner/zig
-
-      # TODO(tahoe): https://github.com/NixOS/nix/issues/13342
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-        with:
-          determinate: true
-      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
-        with:
-          name: ghostty
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-          skipPush: true
-          useDaemon: false # sometimes fails on short jobs
-
-      - name: swiftlint check
-        run: nix develop -c swiftlint lint --strict
 
   typos:
     if: github.repository == 'ghostty-org/ghostty' && needs.skip.outputs.skip != 'true'

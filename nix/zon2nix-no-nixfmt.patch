@@ -1,0 +1,95 @@
+diff --git a/src/main.zig b/src/main.zig
+index 0e8c271..faf56b6 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -764,35 +764,35 @@ pub fn main(init: std.process.Init) !u8 {
+         var file_buffer: [64]u8 = undefined;
+         var file_writer = file.file.writer(io, &file_buffer);
+ 
+-        var nixfmt = std.process.spawn(
+-            io,
+-            .{
+-                .argv = &.{ options.nixfmt, "-" },
+-                .stdin = .pipe,
+-                .stdout = .pipe,
+-            },
+-        ) catch |err| switch (err) {
+-            error.FileNotFound => {
+-                log.err("unable to execute nixfmt, is it in your PATH?", .{});
+-                return 1;
+-            },
+-            else => |e| return e,
+-        };
+-        errdefer nixfmt.kill(io);
++        // var nixfmt = std.process.spawn(
++            // io,
++            // .{
++                // .argv = &.{ options.nixfmt, "-" },
++                // .stdin = .pipe,
++                // .stdout = .pipe,
++            // },
++        // ) catch |err| switch (err) {
++            // error.FileNotFound => {
++                // log.err("unable to execute nixfmt, is it in your PATH?", .{});
++                // return 1;
++            // },
++            // else => |e| return e,
++        // };
++        // errdefer nixfmt.kill(io);
+ 
+-        const stdin = nixfmt.stdin orelse return error.ExecFailed;
+-        var stdin_buf: [1024]u8 = undefined;
+-        var stdin_writer = stdin.writer(io, &stdin_buf);
++        // const stdin = nixfmt.stdin orelse return error.ExecFailed;
++        // var stdin_buf: [1024]u8 = undefined;
++        // var stdin_writer = stdin.writer(io, &stdin_buf);
+ 
+-        const stdout = nixfmt.stdout orelse return error.ExecFailed;
+-        var stdout_buf: [1024]u8 = undefined;
+-        var stdout_reader = stdout.reader(io, &stdout_buf);
++        // const stdout = nixfmt.stdout orelse return error.ExecFailed;
++        // var stdout_buf: [1024]u8 = undefined;
++        // var stdout_reader = stdout.reader(io, &stdout_buf);
+ 
+-        var stream_to_file = try io.concurrent(
+-            zon2nix.streamer,
+-            .{ &stdout_reader.interface, &file_writer.interface },
+-        );
+-        defer stream_to_file.cancel(io) catch {};
++        // var stream_to_file = try io.concurrent(
++            // zon2nix.streamer,
++            // .{ &stdout_reader.interface, &file_writer.interface },
++        // );
++        // defer stream_to_file.cancel(io) catch {};
+ 
+         const template = switch (zig_version) {
+             .@"15" => @embedFile("header_0_15.nix"),
+@@ -802,7 +802,7 @@ pub fn main(init: std.process.Init) !u8 {
+         const head, const rest = splitTemplate(template, packages_marker);
+         const middle, const tail = splitTemplate(rest, path_dependencies_marker);
+ 
+-        const w = &stdin_writer.interface;
++        const w = &file_writer.interface;
+         try w.writeAll(head);
+         for (list.items) |dep| try writeNixPackage(alloc, w, dep);
+         try w.writeAll(middle);
+@@ -816,13 +816,14 @@ pub fn main(init: std.process.Init) !u8 {
+         }
+         try w.writeAll(tail);
+ 
+-        try stdin_writer.interface.flush();
+-        stdin.close(io);
+-        nixfmt.stdin = null;
++        try w.flush();
++        // try stdin_writer.interface.flush();
++        // stdin.close(io);
++        // nixfmt.stdin = null;
+ 
+-        try stream_to_file.await(io);
++        // try stream_to_file.await(io);
+ 
+-        _ = try nixfmt.wait(io);
++        // _ = try nixfmt.wait(io);
+ 
+         try file.replace(io);
+     }
