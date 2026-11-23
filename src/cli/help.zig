@@ -67,13 +67,25 @@ pub fn run(alloc: Allocator) !u8 {
         try stdout.print("  +{s}\n", .{field});
     }
 
-    try stdout.writeAll(
-        \\
-        \\Specify `+<action> --help` to see the help for a specific action,
-        \\where `<action>` is one of actions listed above.
-        \\
-    );
+    try stdout.writeAll(footer);
     try stdout.flush();
 
     return 0;
+}
+
+const footer =
+    \\
+    \\Specify `+<action> --help` to see the help for a specific action,
+    \\where `<action>` is one of actions listed above.
+    \\
+    \\Maintained by Joshua Li: https://github.com/joshuarli/ghostty
+    \\
+;
+
+test "help footer names the maintained repository" {
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        footer,
+        "\nMaintained by Joshua Li: https://github.com/joshuarli/ghostty\n",
+    ) != null);
 }
