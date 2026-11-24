@@ -2,6 +2,8 @@
 
 A file for [guiding coding agents](https://agents.md/).
 
+This fork's current and future work lives in [docs/roadmap.md](docs/roadmap.md); its Status is the resume point.
+
 ## Commands
 
 - **Build:** `zig build`

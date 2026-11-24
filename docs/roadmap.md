@@ -1,14 +1,30 @@
-# Campaign: Laputa — minimal Wayland runtime for Ghostty
+# Roadmap
+
+This is the single plan for this repository: all current and future work, and the handoff for resuming it. Campaigns are sections below, and their items interleave in **Sequence**. "Resume the roadmap" means continue from **Status**.
 
 ## Status
 
-Goal: `src/apprt/wayland/` native Wayland runtime in this fork, musl, no GTK/X11/D-Bus, single window, in two profiles that share one apprt: OpenGL (GPU renderer, frames read back to CPU and presented through `wl_shm`) and software (`-Drenderer=software`, CPU rasterizer, fully static musl; see `docs/SOFTWARE-WAYLAND.md`). QEMU-proven.
-Done: both profiles build; full `zig build test -Dapp-runtime=wayland -Drenderer=software` is green (4206 passed, 44 skipped) and `sh host/wayland-vm/vm.sh test` PASSes twice from a fresh `setup` with the static ReleaseFast binary (M2); the apprt and software-backend tests are now compiled into the suite, where they were not before; review fixes landed for connection teardown order, dmabuf double close, key repeat, keyboard focus, keymap descriptor, shm format check, text-input-v3 IME, software frame copies, and keyboard sound and the bell through ALSA without libasound; `host/wayland-fake/run.sh` checks input method traffic, compositor loss, and a missing shm format against a scripted compositor; pixel-differential tests compare the CPU rasterizer with a reference transcribed from the GLSL shaders and fixed six divergences; release workflow publishes a static x86_64 software artifact with `PT_INTERP`/`DT_NEEDED` checks.
-Not done: DMA-BUF is not negotiated, so the OpenGL profile pays GPU readback; a real input method has not been exercised; sound has been run against real hardware only silently and at inaudible volume; the rasterizer is not benchmarked.
-Next: benchmark the software profile against its own baseline before further optimization.
-Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first command `sh host/wayland-vm/vm.sh test`.
+- State: active; Laputa has no slice recorded as in progress.
+- Last recorded acceptance: M2 at `1dfca6c9f`; the integration branch was green for the recorded software suite and VM runs, but its current state is unverified.
+- Parked branches: none recorded.
+- Next: establish a software profile benchmark baseline before further optimization; the slice and acceptance command are not yet planned.
+- Resume prompt: "resume the roadmap" ("resume the campaign" means the same); first command from a clean tree: `sh host/wayland-vm/vm.sh test`.
 
-## Charter
+## Sequence
+
+No ready slices are recorded. The next benchmark slice needs a workload and acceptance command before it can be scheduled.
+
+## Campaign: Laputa — minimal Wayland runtime for Ghostty
+
+### Goal and state
+
+State: active. Build a native Wayland runtime in `src/apprt/wayland/` for this fork: musl, no GTK, X11, or D-Bus, and one window. The OpenGL profile reads GPU frames back to CPU and presents them through `wl_shm`; the software profile uses `-Drenderer=software` and a fully static musl binary. Both profiles must be QEMU-proven. See [the software profile](SOFTWARE-WAYLAND.md).
+
+Both profiles build. The recorded `zig build test -Dapp-runtime=wayland -Drenderer=software` suite passed with 4206 tests passed and 44 skipped, and the VM test passed twice from a fresh setup with the static ReleaseFast binary. The suite includes the apprt and software-backend tests. Review fixes cover connection teardown, dmabuf double close, key repeat, keyboard focus, keymap descriptor, shm format checks, text-input-v3 IME, software frame copies, keyboard sound, and the bell through ALSA without libasound. `host/wayland-fake/run.sh` checks input method traffic, compositor loss, and a missing shm format against a scripted compositor. Pixel-differential tests compare the CPU rasterizer with a GLSL-derived reference and found six divergences, now fixed. The release workflow publishes a static x86_64 software artifact with `PT_INTERP` and `DT_NEEDED` checks.
+
+DMA-BUF is not negotiated, so the OpenGL profile pays GPU readback. A real input method has not been exercised. Sound has only been run against real hardware silently and at inaudible volume. The rasterizer has not been benchmarked.
+
+### Execution rules
 
 - Decide and keep going. Record a decision only when a later slice depends on it.
 - Within the execution grant, proceed without approval. Park items needing outside authority.
@@ -16,10 +32,10 @@ Resume: `/burn-down-the-backlog docs/CAMPAIGN-LAPUTA.md` from clean tree; first 
 - Fix egregious breakage met on the way in its own commit to numeric thresholds below. Otherwise record and leave.
 - Parity before optimization. Size/polish gates only in P4.
 - One writer by default. Parallel lanes only for the disjoint pairs in Sequence, in `.work/wt/<lane>`, never `/tmp`, per orchestrate worktree lifecycle.
-- Every commit is Conventional Commit with workstream scope; item ID in body. Code comments never cite this doc.
+- Every commit is Conventional Commit with workstream scope; item ID in body. Code comments never cite the roadmap.
 - After each accepted slice run the parent steering checkpoint; rewrite Status in place. Git history is the log.
 
-## Decisions
+### Decisions
 
 Owner-decided (from goal brief, 2026-10-30):
 - Additive runtime: keep GTK backend intact, add `-Dapp-runtime=wayland`. No replacement.
@@ -37,17 +53,54 @@ Delegated (executor decides, smallest reversible assumption, log it):
 - Cage vs weston-headless for local (non-QEMU) smoke, bound: must run without host compositor changes.
 - Fontconfig elimination sketch stays a P4 note, bound: no behavior change before close.
 
-## Baseline
+### Baseline
 
-Known red: none established; tree clean at `d1b1ba52c`. Top commits are local tweaks (`35369bcdb` personal defaults, `73f54a1fe` key-sound) — rebase risk noted, not red.
+At the original baseline, known red: none established; tree clean at `d1b1ba52c`. Top commits are local tweaks (`35369bcdb` personal defaults, `73f54a1fe` key-sound) — rebase risk noted, not red.
 Loop timings (2026-10-30, this x86_64 Linux host): `zig: NOT INSTALLED` (need >=0.17.0 per `build.zig.zon`), no `zig-out/`, no `.zig-cache/`; proxy `200x git rev-parse HEAD = 0.56s`. First build is cold-cache + LLVM link, the critical path. QEMU `11.1.2` present, `nc`+`qemu-img` present, edk2 `x86_64`+`aarch64` firmware present.
 Numbers the goal moves (set by L0, targets in Acceptance): GTK/x11 ldd closure, wayland `readelf -d` closure, RSS idle, binary bytes.
 
-## Sequence
+### Acceptance
+
+- D1 Wayland binary exists, GTK-free: `readelf -d zig-out/bin/ghostty` shows no `libgtk-4|libadwaita|libglib-2.0|X11`; `ldd` subset of GTK baseline. Fail: any listed NEEDED present.
+- D2 Single window opens under Wayland, renders text: Q1 `screendump` ppm differs from blank by >2% pixels and `pgrep -f ghostty-wayland` alive. Fail: blank or exit !=0.
+- D3 Present path correct: frames reach the compositor through `wl_shm` with identical sRGB bytes (±1 LSB); an unsupported dmabuf frame is released once and never crashes. DMA-BUF presentation is not implemented. Fail: crash or double release on a dmabuf frame.
+- D4 Input correct: en-US layout, modifiers, repeat, Kitty keyboard encode/decode roundtrip, clipboard paste == copy bytes. Fail: any byte mismatch.
+- D5 musl mostly-static: `file zig-out/bin/ghostty` reports static-pie or musl with only `libEGL/libwayland-client/libxkbcommon/c` dynamic; `strip=true` ReleaseFast boots in Q1. Fail: GTK/X11 NEEDED or Q1 boot fail.
+- D6 QEMU harness reproducible: `sh host/wayland-vm/vm.sh test` PASS twice from clean `.work/vm` with checksummed guest image; console log tail on failure + `failure.ppm` saved. Fail: second run needs manual steps.
+- D7 Static software artifact: `readelf -lW` shows no `INTERP` and `readelf -dW` shows no `NEEDED` for the `-Drenderer=software` musl build, and it runs `--version` and `+show-config`. Fail: either entry present.
+
+### Needs environment
+
+- Physical HiDPI fractional-scale eyeball (150%/200% on real panel): owner runs Q1 guest with `-device virtio-gpu-pci,xres=3840,yres=2160` and compares `desktop.ppm` to eyeball. Local proof is `smoke-graphics.sh` only.
+- Real GPU EGL (virtio-gpu virgl vs pixman): default harness forces `WLR_RENDERER=pixman`; owner with GPU runs `WLR_RENDERER=gles2 sh host/wayland-vm/vm.sh test`.
+
+### Execution boundary and non-goals
+
+Authorized: provision Zig 0.17.0+ via pinned channel; edit `src/apprt/wayland/*`, `src/apprt/{runtime,}.zig`, `src/build*`, `host/wayland-vm/*`, `docs/roadmap.md` Status; run `zig build`, `zig build test*`, QEMU with KVM on this host; download Alpine virt ISO + apk packages with sha256 check.
+Forbidden: `git push`, replacing/removing GTK backend, changing pinned dep URLs/hashes without owner note, host network/DNS changes, touching `~` outside repo, `/tmp` for worktrees/scratch (use `.work/`), adding CI workflows.
+Non-goals: tabs/splits/tab-overview, D-Bus single-instance/portals/notifications, X11 backend, libadwaita/GResource/blueprint, fully-static EGL/Mesa, `libghostty-vt` renderer rewrite, custom GLSL shaders in the software profile.
+Contract changes for owner: new `-Dapp-runtime=wayland` value; `Action` allowlist limited to `new_window/close/quit` in wayland runtime; no D-Bus activation contract.
+
+### Reference
+
+Verified map (all at `d1b1ba52c`):
+- `src/apprt/runtime.zig:5-24` enum `{none,gtk}`, default gtk on linux/freebsd.
+- `src/apprt.zig:43-50` comptime `runtime` switch; `src/build_config.zig:41` forwards `app_runtime`; `src/main_ghostty.zig:77,104-114` init/run/terminate.
+- `src/build/Config.zig:202-206` `-Dapp-runtime`, `:256-266` `-Dgtk-wayland/-Dgtk-x11` (GTK-only wording to generalize).
+- `src/build/SharedDeps.zig:672-678` EGL link gated on `.gtk`, `:697-700` `switch app_runtime {.none,.gtk}`, `:711-882` `addGtk` (gobject `:719-737`, x11 `:755-772`, wayland scanner `:774-864`, gresource `:866-881`).
+- Renderer reuse: `src/renderer/OpenGL.zig:52-90` surfaceless-agnostic context, `:277-324` `ExportedFrame{memory|dmabuf}`; `src/renderer/opengl/Device.zig:37-74` `SURFACELESS_MESA` + injectable `Options.display`; `src/renderer/opengl/Target.zig:148-215` `exportDmabuf`, `:224-242` `readPixelsAlloc`; `src/renderer/Dmabuf.zig:10-75` wire format. Zero GTK imports in `src/renderer/`.
+- Sole GTK consumer: `src/apprt/gtk/class/render_surface.zig:149-175` `takeFrame`, `:307-365` dmabuf builder + `DmabufBuildFailed`, `:390-429` shm `GdkMemoryTexture` fallback — mirror for Wayland present.
+- Exhaustive `app_runtime` switches to arm: `src/input/Binding.zig:995`, `src/datastruct/split_tree.zig:1332`, `src/config/Config.zig:4941,9021,9419,10141`, `src/apprt/{surface:174,structs:47+53+216,action:733}`, `src/font/face.zig:61`, `src/terminal/mouse.zig:84`, `src/cli/version.zig:45-49`.
+- Deps pinned: `build.zig.zon:57-59` zig_wayland, `:104-110` wayland_protocols; no existing `src/apprt/wayland/`.
+- Harness prior art: `.github/scripts/freebsd-vm/vm.sh:351-381,383-417` daemonize/pidfile/ssh-wait/stop, `:437-444` snapshot; `test-freebsd.sh:1-92` proves cross-built test binaries in-VM; `~/usr/host/alpine/tests/vm.sh:38-66` `wait_for/send/run/must/poll`, `:78-88` serial fifo bridge, `:206-221` cage-like dwl+foot + `screendump` + `! pidof Xwayland`, `:115-141` accel/firmware/virtio-gpu flags.
+
+### Original sequence and milestone commands
+
+These are the original slice definitions and acceptance commands. The recorded status above supersedes their ordering as current work.
 
 P0 ground. L0 provisions Zig 0.17.0+, records GTK baseline (size, ldd, configure+build seconds). No parallel work until W1 lands.
 
-- L0 provision+baseline. Owns: nothing (env) + this doc Status. Prereq: none. Accept: `zig version | grep -q 0.17 && zig build -Dapp-runtime=gtk -Demit-themes=false -Di18n=false -Doptimize=Debug && ls -lh zig-out/bin/ghostty && ldd zig-out/bin/ghostty | tee .work/baseline-ldd.txt`.
+- L0 provision+baseline. Owns: nothing (env) + roadmap Status. Prereq: none. Accept: `zig version | grep -q 0.17 && zig build -Dapp-runtime=gtk -Demit-themes=false -Di18n=false -Doptimize=Debug && ls -lh zig-out/bin/ghostty && ldd zig-out/bin/ghostty | tee .work/baseline-ldd.txt`.
 - W1 runtime stub + build gate. Owns: `src/apprt/runtime.zig`, `src/apprt.zig`, `src/build_config.zig`, `src/build/Config.zig`, `src/build/SharedDeps.zig`, `src/apprt/wayland/*`. Prereq: L0. Accept: `zig build -Dapp-runtime=wayland -Dtarget=x86_64-linux-musl -Demit-themes=false -Di18n=false && readelf -d zig-out/bin/ghostty | tee .work/wayland-dyn.txt && ! grep -Ei 'gtk|adwaita|gobject|X11' .work/wayland-dyn.txt`.
 
 P1 parity, serial (all share `src/apprt/wayland/` + renderer contract). May parallelize with Q-harness skeleton only (disjoint: `host/wayland-vm/*`).
@@ -67,37 +120,7 @@ P3 optimization + QEMU harness build-out. Disjoint pair: W6 (tree: `src/`, build
 
 Milestones: M1 after W4 (narrow suites + `zig build test-lib-vt`); M2 after W6+Q1 (full `zig build test` + Q1 PASS). Red tree blocks new slices. Attempt cap 3 per slice, then park on branch with cause + retry condition.
 
-## Acceptance
+## Later
 
-- D1 Wayland binary exists, GTK-free: `readelf -d zig-out/bin/ghostty` shows no `libgtk-4|libadwaita|libglib-2.0|X11`; `ldd` subset of GTK baseline. Fail: any listed NEEDED present.
-- D2 Single window opens under Wayland, renders text: Q1 `screendump` ppm differs from blank by >2% pixels and `pgrep -f ghostty-wayland` alive. Fail: blank or exit !=0.
-- D3 Present path correct: frames reach the compositor through `wl_shm` with identical sRGB bytes (±1 LSB); an unsupported dmabuf frame is released once and never crashes. DMA-BUF presentation is not implemented. Fail: crash or double release on a dmabuf frame.
-- D4 Input correct: en-US layout, modifiers, repeat, Kitty keyboard encode/decode roundtrip, clipboard paste == copy bytes. Fail: any byte mismatch.
-- D5 musl mostly-static: `file zig-out/bin/ghostty` reports static-pie or musl with only `libEGL/libwayland-client/libxkbcommon/c` dynamic; `strip=true` ReleaseFast boots in Q1. Fail: GTK/X11 NEEDED or Q1 boot fail.
-- D6 QEMU harness reproducible: `sh host/wayland-vm/vm.sh test` PASS twice from clean `.work/vm` with checksummed guest image; console log tail on failure + `failure.ppm` saved. Fail: second run needs manual steps.
-- D7 Static software artifact: `readelf -lW` shows no `INTERP` and `readelf -dW` shows no `NEEDED` for the `-Drenderer=software` musl build, and it runs `--version` and `+show-config`. Fail: either entry present.
-
-## Needs environment
-
-- Physical HiDPI fractional-scale eyeball (150%/200% on real panel): owner runs Q1 guest with `-device virtio-gpu-pci,xres=3840,yres=2160` and compares `desktop.ppm` to eyeball. Local proof is `smoke-graphics.sh` only.
-- Real GPU EGL (virtio-gpu virgl vs pixman): default harness forces `WLR_RENDERER=pixman`; owner with GPU runs `WLR_RENDERER=gles2 sh host/wayland-vm/vm.sh test`.
-
-## Execution boundary and non-goals
-
-Authorized: provision Zig 0.17.0+ via pinned channel; edit `src/apprt/wayland/*`, `src/apprt/{runtime,}.zig`, `src/build*`, `host/wayland-vm/*`, `docs/CAMPAIGN-LAPUTA.md` Status; run `zig build`, `zig build test*`, QEMU with KVM on this host; download Alpine virt ISO + apk packages with sha256 check.
-Forbidden: `git push`, replacing/removing GTK backend, changing pinned dep URLs/hashes without owner note, host network/DNS changes, touching `~` outside repo, `/tmp` for worktrees/scratch (use `.work/`), adding CI workflows.
-Non-goals: tabs/splits/tab-overview, D-Bus single-instance/portals/notifications, X11 backend, libadwaita/GResource/blueprint, fully-static EGL/Mesa, `libghostty-vt` renderer rewrite, custom GLSL shaders in the software profile.
-Contract changes for owner: new `-Dapp-runtime=wayland` value; `Action` allowlist limited to `new_window/close/quit` in wayland runtime; no D-Bus activation contract.
-
-## Reference
-
-Verified map (all at `d1b1ba52c`):
-- `src/apprt/runtime.zig:5-24` enum `{none,gtk}`, default gtk on linux/freebsd.
-- `src/apprt.zig:43-50` comptime `runtime` switch; `src/build_config.zig:41` forwards `app_runtime`; `src/main_ghostty.zig:77,104-114` init/run/terminate.
-- `src/build/Config.zig:202-206` `-Dapp-runtime`, `:256-266` `-Dgtk-wayland/-Dgtk-x11` (GTK-only wording to generalize).
-- `src/build/SharedDeps.zig:672-678` EGL link gated on `.gtk`, `:697-700` `switch app_runtime {.none,.gtk}`, `:711-882` `addGtk` (gobject `:719-737`, x11 `:755-772`, wayland scanner `:774-864`, gresource `:866-881`).
-- Renderer reuse: `src/renderer/OpenGL.zig:52-90` surfaceless-agnostic context, `:277-324` `ExportedFrame{memory|dmabuf}`; `src/renderer/opengl/Device.zig:37-74` `SURFACELESS_MESA` + injectable `Options.display`; `src/renderer/opengl/Target.zig:148-215` `exportDmabuf`, `:224-242` `readPixelsAlloc`; `src/renderer/Dmabuf.zig:10-75` wire format. Zero GTK imports in `src/renderer/`.
-- Sole GTK consumer: `src/apprt/gtk/class/render_surface.zig:149-175` `takeFrame`, `:307-365` dmabuf builder + `DmabufBuildFailed`, `:390-429` shm `GdkMemoryTexture` fallback — mirror for Wayland present.
-- Exhaustive `app_runtime` switches to arm: `src/input/Binding.zig:995`, `src/datastruct/split_tree.zig:1332`, `src/config/Config.zig:4941,9021,9419,10141`, `src/apprt/{surface:174,structs:47+53+216,action:733}`, `src/font/face.zig:61`, `src/terminal/mouse.zig:84`, `src/cli/version.zig:45-49`.
-- Deps pinned: `build.zig.zon:57-59` zig_wayland, `:104-110` wayland_protocols; no existing `src/apprt/wayland/`.
-- Harness prior art: `.github/scripts/freebsd-vm/vm.sh:351-381,383-417` daemonize/pidfile/ssh-wait/stop, `:437-444` snapshot; `test-freebsd.sh:1-92` proves cross-built test binaries in-VM; `~/usr/host/alpine/tests/vm.sh:38-66` `wait_for/send/run/must/poll`, `:78-88` serial fifo bridge, `:206-221` cage-like dwl+foot + `screendump` + `! pidof Xwayland`, `:115-141` accel/firmware/virtio-gpu flags.
+- Laputa: benchmark the software profile against its own baseline before further optimization. No ticket recorded.
+- Fix musl release binaries that require an unshipped `librust_fontconfig` library: GHO-1 in [TODO](../TODO.md).
