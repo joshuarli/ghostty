@@ -82,11 +82,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install buildlib prerequisites
+        shell: sh
+        run: apk add --no-cache bash curl xz tar ca-certificates
+
+      - uses: laputa-systems/buildlib/setup@4ed2e0a1e0a5d23911ffccdd97349d30a7885f01 # v0.3.2
+        with:
+          tools: llvm cmake gluon git
+          lock: .github/tools.lock.json
+          cache-dir: ${{ github.workspace }}/.laputa-tools
+
       - name: Install toolchain and dependencies
         shell: sh
         run: |
-          apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig tar zstd \
+          apk add --no-cache libgcc xz file binutils make pkgconfig tar zstd \
             wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses freetype-dev harfbuzz-dev cargo curl
+          ln -sfn libgcc_s.so.1 /usr/lib/libgcc_s.so
+          ln -sfn /opt/laputa/bin/clang /usr/local/bin/cc
 
       - name: Build rust-fontconfig
         run: dist/linux/build-rust-fontconfig.sh
@@ -140,10 +152,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install buildlib prerequisites
+        shell: sh
+        run: apk add --no-cache bash curl xz tar ca-certificates
+
+      - uses: laputa-systems/buildlib/setup@4ed2e0a1e0a5d23911ffccdd97349d30a7885f01 # v0.3.2
+        with:
+          tools: llvm cmake gluon git
+          lock: .github/tools.lock.json
+          cache-dir: ${{ github.workspace }}/.laputa-tools
+
       - name: Install toolchain and dependencies
         shell: sh
         run: |
-          apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig tar zstd \
+          apk add --no-cache xz file binutils make pkgconfig tar zstd \
             wayland-dev libxkbcommon-dev libxkbcommon-static libffi-dev ncurses
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
@@ -192,15 +214,26 @@ jobs:
       # JS actions cannot run inside Alpine containers on ARM runners, so the
       # musl build runs in Alpine via docker CLI from the Ubuntu host. This
       # keeps the same shared-font musl configuration as x86_64.
+      - name: Prepare Alpine image with owned tools
+        run: |
+          docker build --platform linux/arm64 -t ghostty-owned-tools:local -f - . <<'EOF'
+          FROM alpine:edge
+          COPY --from=oci.17166969.xyz/owned-tools@sha256:aaec19e7a44cbc53b40db2d22093600ee888689b89be94da90e5398ed02f1883 /opt/laputa /opt/laputa
+          ENV PATH="${PATH}:/opt/laputa/bin"
+          EOF
+
       - name: Build Laputa Wayland binary in Alpine
         run: |
           docker run --rm --platform linux/arm64 \
             -v "${{ github.workspace }}:/work" -w /work \
             -e LINUX_ARTIFACT_ARM64 \
-            alpine:edge sh -c '
+            ghostty-owned-tools:local sh -c '
               set -ex
-              apk add --no-cache bash git xz file binutils clang cmake ninja make pkgconfig tar zstd curl \
+              apk add --no-cache libgcc xz file binutils make pkgconfig tar zstd curl \
                 wayland-dev libxkbcommon-dev mesa-egl mesa-dev libseat-dev ncurses freetype-dev harfbuzz-dev cargo curl
+              ln -sfn libgcc_s.so.1 /usr/lib/libgcc_s.so
+              ln -sfn /opt/laputa/bin/clang /usr/local/bin/cc
+              git config --system --add safe.directory /work
               dist/linux/build-rust-fontconfig.sh
               curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.17.1/zig-aarch64-linux-0.17.1.tar.xz
               echo "a1546d5646eb184437918d6635ca6b762a0e889eac09cef720ee7a1ed3fe7795  /tmp/zig.tar.xz" | sha256sum -c -

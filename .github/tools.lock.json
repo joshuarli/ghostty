@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "tools": {
+    "cmake": {
+      "assets": {
+        "aarch64-apple-darwin": {
+          "name": "cmake-4.4.5-aarch64-apple-darwin.tar.xz",
+          "sha256": "d1257c242d33a12bca60e0c1ac7f39b51a7f9b2eddde39b3f4b682ebdfbabb7e",
+          "size": 18839448
+        },
+        "aarch64-unknown-linux-musl": {
+          "name": "cmake-4.4.5-aarch64-unknown-linux-musl.tar.xz",
+          "sha256": "b7dd9a8ea2420967fa63b4f8b2e1973d55e00c40f708e386622d15791219a27f",
+          "size": 19019992
+        },
+        "x86_64-unknown-linux-musl": {
+          "name": "cmake-4.4.5-x86_64-unknown-linux-musl.tar.xz",
+          "sha256": "60e75652165f81c38d6db1d3dec2f173cf1529df85c185899f5e7a47fc0e1892",
+          "size": 20747536
+        }
+      },
+      "product": "cmake",
+      "repository": "laputa-systems/cmake-build",
+      "tag": "release-973009dec3f690c9d41122d27c6e8f93ef7f7e70",
+      "version": "4.4.5"
+    },
+    "git": {
+      "assets": {
+        "aarch64-apple-darwin": {
+          "name": "git-2.56.0-aarch64-apple-darwin.tar.xz",
+          "sha256": "916dcd510d4abfec17e20f61289da81a8f81d85ab32fa0c13ec6c7acd7d22de2",
+          "size": 1983688
+        },
+        "aarch64-unknown-linux-musl": {
+          "name": "git-2.56.0-aarch64-unknown-linux-musl.tar.xz",
+          "sha256": "f7f10037244f5f9f5e122eaab96be9d4bc08b5492a5b81966be1549190c6a5ca",
+          "size": 2361548
+        },
+        "x86_64-unknown-linux-musl": {
+          "name": "git-2.56.0-x86_64-unknown-linux-musl.tar.xz",
+          "sha256": "127290726c9a8ce789b2154c37922def9021ba451bf4d69fc43fe77501370118",
+          "size": 2717496
+        }
+      },
+      "product": "git",
+      "repository": "laputa-systems/git-build",
+      "tag": "release-eb59d7194a243c5ccaeca0e8dff58031527dfaf3",
+      "version": "2.56.0"
+    },
+    "gluon": {
+      "assets": {
+        "aarch64-apple-darwin": {
+          "name": "gluon-aarch64-apple-darwin.tar.xz",
+          "sha256": "0d6d1e75ff062415cc6446167675cea0512a9995d37b54953dbdeddaf23d5c9a",
+          "size": 883200
+        },
+        "aarch64-unknown-linux-musl": {
+          "name": "gluon-aarch64-unknown-linux-musl.tar.xz",
+          "sha256": "e972a27dbfccf188ee1994f88b95dc5cac8f915e0e6cce181107014061e3be96",
+          "size": 861096
+        },
+        "x86_64-unknown-linux-musl": {
+          "name": "gluon-x86_64-unknown-linux-musl.tar.xz",
+          "sha256": "fdbfc23eaa666384eed6a7baa95022fbb05281c9ed210370d43b231281bb13f5",
+          "size": 982492
+        }
+      },
+      "product": "gluon",
+      "repository": "laputa-systems/gluon",
+      "tag": "release-2cb44faa2ff4a5c9d1be1780dc97c3398f54ef38",
+      "version": ""
+    },
+    "llvm": {
+      "assets": {
+        "aarch64-unknown-linux-musl": {
+          "name": "llvm-23.1.5-aarch64-unknown-linux-musl.tar.xz",
+          "sha256": "4d8b637d65ed0299c8b7852c1e7e1d41f7141346ce31e707f0975ff67460121e",
+          "size": 94369760
+        },
+        "x86_64-unknown-linux-musl": {
+          "name": "llvm-23.1.5-x86_64-unknown-linux-musl.tar.xz",
+          "sha256": "de3f6d0ad089391482147c61648c511c500b25289132fe7f2c446a0905406d2a",
+          "size": 101344736
+        }
+      },
+      "product": "llvm",
+      "repository": "laputa-systems/llvm-prebuilt-musl",
+      "tag": "release-b29e4d07a2b9a5e72319b37429cf375149212755",
+      "version": "23.1.5"
+    }
+  }
+}
