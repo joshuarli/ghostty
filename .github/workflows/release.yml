@@ -215,12 +215,7 @@ jobs:
       # musl build runs in Alpine via docker CLI from the Ubuntu host. This
       # keeps the same shared-font musl configuration as x86_64.
       - name: Prepare Alpine image with owned tools
-        run: |
-          docker build --platform linux/arm64 -t ghostty-owned-tools:local -f - . <<'EOF'
-          FROM alpine:edge
-          COPY --from=oci.17166969.xyz/owned-tools@sha256:aaec19e7a44cbc53b40db2d22093600ee888689b89be94da90e5398ed02f1883 /opt/laputa /opt/laputa
-          ENV PATH="${PATH}:/opt/laputa/bin"
-          EOF
+        run: printf '%s\n' 'FROM alpine:edge' 'COPY --from=oci.17166969.xyz/owned-tools@sha256:aaec19e7a44cbc53b40db2d22093600ee888689b89be94da90e5398ed02f1883 /opt/laputa /opt/laputa' 'ENV PATH="${PATH}:/opt/laputa/bin"' | docker build --platform linux/arm64 -t ghostty-owned-tools:local -f - .
 
       - name: Build Laputa Wayland binary in Alpine
         run: |
